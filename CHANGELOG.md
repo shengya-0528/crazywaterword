@@ -4,6 +4,10 @@
 
 ## 2026-11-15
 
+- 城战自动化补齐选城、汽油预算、攻城前维修与每日出征上限：新增 `targetMode`（宣战列表顺序 / 在场舰队最少）、`dailyDispatchLimit`、`petrol.reserve`、`petrol.dailyLimit`、`repair.enabled/belowPercent/maxCost`。选城改为按宣战列表遍历并逐个套用当日重复进攻去重、汽油预算与出征上限；汽油消耗按舰队到目标城的六边形距离查 `AttackCityConsumeCfg` 分档估算，配置或地图缺失时退回原顺序逻辑。维修门槛取「耐久上限 × 百分比」与「攻城战消耗耐久」的较大值，`maxCost` 上限按 `FleetRepairParamRequest` 单价判定，超限只跳过该舰队的进攻。以上选项默认关闭或为 0，旧设置文件重新加载时自动补默认值，行为与改动前一致。
+- 竞技场挑战补上与其他挑战共用的发送间隔：`ArenaChallengeRequest` 原先连续提交，现与主线、试炼共用 `CHALLENGE_COOLDOWN_MS`（1500ms）节流，避免频控拒绝导致整个战斗模块中断。
+- 配置包改为按修改时间选最新：`findConfigPack()` 不再无条件使用 `work/cdn/config_cn_pack.json`，改为在缓存候选里取 `mtimeMs` 最新者；`tools/sync-config.mjs` 复制后保留源时间戳，避免同步副本永久遮蔽游戏刚下载的新缓存。
+- 世界地图配置版本不再硬编码：`fetchMap` 原先固定请求 `remote/world_map/config.2ca75.json`，版本一变即 404；现从微信小程序包读取 `bundleVers.world_map` 生成地址，读不到时退回旧值。
 - 「自动化」页签并入「挂机」页：导航去掉独立的自动化入口，自动化模块的设置、计划预览、单轮执行、循环执行与运行日志成为挂机页里的一张卡片，页面顺序为 定时挂机 → 自动化模块 → 断线重连 → 异常通知 → 任务开关网格 → 挂机记录。切到挂机页时才按需加载自动化设置（首次进入或换账号才请求），避免每次切页用服务端值覆盖未保存的编辑；浮动「保存设置」「回到顶部」的可见性判断从 `#tab-automation` 改为 `#tab-idle`。保存设置、执行一轮、开始循环仍需先勾选再等 3 秒倒计时确认。
 
 ## 2026-11-12

@@ -18,7 +18,13 @@ if (names.length < 100) {
 }
 
 fs.mkdirSync(path.dirname(CONFIG_PACK_PATH), { recursive: true });
-fs.copyFileSync(source, CONFIG_PACK_PATH);
+// 同步副本与缓存是同一个文件时不复制；findConfigPack 按 mtime 判新旧，
+// 复制必须保留源时间戳，否则旧包会被刷成"最新"而盖住游戏刚下载的新缓存。
+if (path.resolve(source) !== path.resolve(CONFIG_PACK_PATH)) {
+  fs.copyFileSync(source, CONFIG_PACK_PATH);
+  const from = fs.statSync(source);
+  fs.utimesSync(CONFIG_PACK_PATH, from.atime, from.mtime);
+}
 const size = (fs.statSync(CONFIG_PACK_PATH).size / 1024 / 1024).toFixed(1);
 console.log(`已同步 ${names.length} 张表 (${size} MB)`);
 console.log(`  来源 ${source}`);

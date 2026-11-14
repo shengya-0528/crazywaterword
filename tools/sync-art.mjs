@@ -73,7 +73,7 @@ export function findCacheDir() {
 
 // Use the active game's bundle versions: a cache may retain multiple versions
 // of the same bundle, each packing its sprites at different coordinates.
-function bundleVersions(cacheDir) {
+export function bundleVersions(cacheDir) {
   const root = path.resolve(cacheDir, '../../../../packages', APPID);
   if (!fs.existsSync(root)) return { versions: {}, fallback: true };
   const files = fs.readdirSync(root).filter(v => /^\d+$/.test(v)).sort((a, b) => Number(b) - Number(a));

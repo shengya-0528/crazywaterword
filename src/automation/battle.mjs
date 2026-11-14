@@ -167,7 +167,7 @@ export async function battle(ctx, options) {
       if (pendingBlocked) return;
     }
   }
-  if (options.arena.challenge || options.arena.sweep) await arena(ctx, options);
+  if (options.arena.challenge || options.arena.sweep) await arena(ctx, options, pacing);
   for (const [key, raidId] of [['heroExp', 1], ['forge', 2], ['petExp', 3]]) {
     const rule = options.trial[key];
     if (rule.challenge || rule.rubySweep) {
@@ -243,7 +243,7 @@ async function vipTrialSweep(ctx, raidId) {
 }
 
 /** 竞技场选择可扫荡排名或比自己弱且排名更高的对手。 */
-async function arena(ctx, options) {
+async function arena(ctx, options, pacing) {
   await repeat(ctx, options.maxActions, async () => {
     const state = await ctx.query('ArenaInfoRequest');
     const mine = state.myself;
@@ -252,6 +252,8 @@ async function arena(ctx, options) {
     if (!options.arena.challenge) return false;
     const enemy = state.challenges?.filter(c => c.rankNo < mine.rankNo && amount(c.power) < amount(mine.power)).sort((a, b) => a.rankNo - b.rankNo)[0];
     if (!enemy) return false;
+    // 竞技场挑战与主线/试炼共用服务器限频，连续打不同排名时不节流会被频控拒绝。
+    await waitChallengeCooldown(ctx, pacing);
     return succeeded(await ctx.action('ArenaChallengeRequest', { rank: enemy.rankNo, challengeId: idString(enemy.id) }, {
       accept: r => r.isWin === true,
       // 挑战零消耗：回包丢失只跳过本轮，下一轮按最新榜单重新选择，不落盘跨轮锁。

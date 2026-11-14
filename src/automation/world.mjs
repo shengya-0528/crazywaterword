@@ -4,6 +4,7 @@ import { claimPass } from './battle.mjs';
 import { pirateDailySweepLimit, pirateSweepProgress } from '../pirates.mjs';
 import { worldOnlineState } from '../extra-rewards.mjs';
 import { cityNameMap } from '../world-map.mjs';
+import { loadMapAsset } from '../world.mjs';
 
 const SPEED_UP_RUBY_TYPE = 1;
 const SPEED_UP_ITEM_TYPE = 2;
@@ -567,15 +568,147 @@ function isAssemblyPermissionDenied(error) {
  * @param {import('./context.mjs').AutomationContext} ctx 当前自动化上下文。
  * @returns {Promise<string|null>} 已确认的本联盟序号；无法唯一确认时返回 null。
  */
-async function cityWarOwnGuildIdx(ctx) {
+/** 攻城战消耗耐久：耐久低于它的舰队连一场攻城都扛不住，必须先修。 */
+function cityWarAttackDurability(ctx) {
+  const row = ctx.rows('WorldParamCfg').find(item => item.paramName === '攻城战消耗耐久');
+  return amount(row?.paramValue) || 0;
+}
+
+/**
+ * 己方联盟与城市实时归属。
+ *
+ * 进攻要按本盟宣战挑城，维修与油耗都要有本盟主城做起点；三者共用这一次读取，
+ * 避免每支舰队各查一遍把城战时段耗在请求上。
+ */
+async function cityWarOwnState(ctx) {
   const ownCityIds = new Set((await ctx.query('GuildCityInfoRequest')).cities?.map(city => idString(city.cityId)).filter(Boolean));
-  if (!ownCityIds.size) return null;
+  if (!ownCityIds.size) return { guildIdx: null, ownCityIds, cities: [], homeCityId: null };
   // WorldInfoRequest 的 screenCenter 是协议必填字段；城战只需要城市归属，不依赖地图坐标。
   const cities = (await ctx.query('WorldInfoRequest', { screenCenter: { x: 0, y: 0 } })).cities ?? [];
   const guildIndexes = new Set(cities
     .filter(city => ownCityIds.has(idString(city.id)) && city.guildIdx !== undefined && city.guildIdx !== null)
     .map(city => idString(city.guildIdx)));
-  return guildIndexes.size === 1 ? [...guildIndexes][0] : null;
+  const guildIdx = guildIndexes.size === 1 ? [...guildIndexes][0] : null;
+  const home = cities.find(city => ownCityIds.has(idString(city.id)) && idString(city.guildIdx) === guildIdx);
+  return { guildIdx, ownCityIds, cities, homeCityId: home ? Number(home.id) : null };
+}
+
+/**
+ * 从本盟主城到各城的汽油费。
+ *
+ * 距离取地图城池格子的六边形坐标，单价按 `AttackCityConsumeCfg` 的距离分档。
+ * 地图或配置缺失时返回 null —— 调用方按「费用未确认」处理，不把可能失败的派遣发出去。
+ */
+async function cityWarCosts(ctx, ownState) {
+  if (!Number.isSafeInteger(ownState.homeCityId)) return null;
+  const scenarioId = Number(ctx.player?.scenarioId) > 0 ? Number(ctx.player.scenarioId) : 1;
+  let map;
+  try { map = await loadMapAsset(scenarioId); } catch { return null; }
+  if (![map?.width, map?.tileWidth, map?.tileHeight].every(n => typeof n === 'number' && n > 0)) return null;
+  const tiers = ctx.rows(`${scenarioId}_AttackCityConsumeCfg`)
+    .map(row => ({ dist: amount(row.dist), cost: Number(row.cost) }))
+    .filter(row => Number.isFinite(row.dist) && Number.isFinite(row.cost) && row.cost >= 0)
+    .sort((a, b) => a.dist - b.dist);
+  if (!tiers.length) return null;
+  const distance = cityId => {
+    const from = map.cityInfo?.[ownState.homeCityId]?.gridIdx;
+    const to = map.cityInfo?.[cityId]?.gridIdx;
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to)) return null;
+    const point = idx => {
+      const row = Math.floor(idx / map.width), col = idx % map.width;
+      return [(col + 0.5 + (row % 2) * 0.5) * map.tileWidth, -row * map.tileHeight / 2];
+    };
+    const a = point(from), b = point(to);
+    return Math.hypot(a[0] - b[0], a[1] - b[1]);
+  };
+  const costs = new Map();
+  for (const city of ownState.cities) {
+    const id = Number(city.id);
+    const span = distance(id);
+    if (span === null) continue;
+    let unit = tiers[0].cost;
+    for (const tier of tiers) { if (span < tier.dist) break; unit = tier.cost; }
+    const cost = Math.ceil(span * unit);
+    if (Number.isSafeInteger(cost)) costs.set(id, cost);
+  }
+  return { costs };
+}
+
+/**
+ * 按宣战列表挑一座本盟可以进攻的城。
+ *
+ * `first` 保持宣战顺序；`fewest` 优先队列最短的城（人数未知的排最后）。
+ * 汽油不足、会跌破保留量、超出今日汽油预算或距离未确认的城直接排除，
+ * 不把必然被服务器拒绝的派遣发出去。
+ *
+ * @returns {number|null} 目标城编号；没有可用目标时为 null。
+ */
+function pickCityWarTarget(ctx, war, ownState, options, cost) {
+  const limit = amount(options.dailyDispatchLimit) || 0;
+  if (limit > 0 && ctx.count('cityWar.dispatched') >= limit) return null;
+  const fuel = amount(ctx.stock.get('汽油'));
+  if (fuel !== null) {
+    const reserve = amount(options.petrol?.reserve) || 0;
+    const dailyLimit = amount(options.petrol?.dailyLimit) || 0;
+    const spent = ctx.count('cityWar.petrol');
+    const candidates = [];
+    for (const declaration of war.declarations ?? []) {
+      if (idString(declaration.attackGuildIdx) !== ownState.guildIdx) continue;
+      const cityId = Number(declaration.cityId);
+      if (!options.reattack && ctx.count(`cityWar.${cityId}`)) continue;
+      // 费用算不出来（地图或配置缺失）时按 0 处理，保持旧配置的派遣行为不变。
+      const petrol = cost?.costs?.get(cityId);
+      const fuelCost = Number.isSafeInteger(petrol) ? petrol : 0;
+      if (fuelCost > 0 && (fuel - fuelCost < reserve || (dailyLimit > 0 && spent + fuelCost > dailyLimit))) continue;
+      // 实时归属只用来取队列人数；拿不到时记为未知，不能当成 0 队。
+      const live = ownState.cities.find(city => Number(city.id) === cityId);
+      const queue = live ? amount(live.attackFleetNum) + amount(live.priorityAtkFleetNum) : NaN;
+      candidates.push({ cityId, queue: Number.isSafeInteger(queue) ? queue : null });
+    }
+    if (!candidates.length) return null;
+    if (options.targetMode !== 'fewest') return candidates[0].cityId;
+    // 人少的优先；人数未知的城不能当成 0 队，统一排在有数据的城之后。
+    const known = candidates.filter(row => row.queue !== null).sort((a, b) => a.queue - b.queue);
+    const unknown = candidates.filter(row => row.queue === null);
+    return [...known, ...unknown][0].cityId;
+  }
+  // 读不到汽油余额时退回原有顺序策略，保持旧配置的行为不变。
+  const declaration = (war.declarations ?? []).find(row => idString(row.attackGuildIdx) === ownState.guildIdx
+    && (options.reattack || !ctx.count(`cityWar.${row.cityId}`)));
+  return declaration ? Number(declaration.cityId) : null;
+}
+
+/**
+ * 城战前维修：耐久低于「攻城战消耗耐久」或配置百分比时先修再出战。
+ *
+ * @returns {boolean} true 表示这支舰队本轮不要再派（已提交维修、报价缺失或费用超限）。
+ */
+async function cityWarRepair(ctx, fleet, options, attackDurability) {
+  const config = options.repair ?? {};
+  if (!config.enabled) return false;
+  const maxDura = amount(fleet.maxDura), durability = amount(fleet.durability);
+  if (!(maxDura > 0) || durability >= maxDura) return false;
+  const line = Math.max(maxDura * (amount(config.belowPercent) || 0) / 100, attackDurability || 0);
+  if (!(durability < line)) return false;
+  const label = `城战维修 ${fleet.buildingId}`;
+  const maxCost = amount(config.maxCost) || 0;
+  if (maxCost > 0) {
+    // 上限开启时必须先取到报价；读不到就当维修不可行，不能让未知费用穿过去。
+    const quote = await ctx.query('FleetRepairParamRequest', { buildingId: String(fleet.buildingId) });
+    const unit = Number(quote?.unitRepairCost);
+    if (!(Number.isFinite(unit) && unit > 0)) {
+      ctx.record({ label, status: 'skipped', reason: '未取得有效维修报价，跳过维修与派遣' });
+      return true;
+    }
+    const cost = Math.ceil((maxDura - durability) * unit);
+    if (cost > maxCost) {
+      ctx.record({ label, status: 'skipped', reason: `完整维修需要 ${cost}，超过单次上限 ${maxCost}` });
+      return true;
+    }
+  }
+  const result = await dispatch(ctx, 'RepairFleetRequest', { buildingId: String(fleet.buildingId) }, [fleet]);
+  ctx.record({ label, status: result.status, reason: `耐久 ${durability}/${maxDura} 低于 ${Math.round(line)}，提交维修后再出战` });
+  return true;
 }
 
 /** 城战仅在上海时间 20:00–21:00 且服务器确认开放后执行，城市记录按角色业务日隔离。 */
@@ -648,22 +781,29 @@ async function cityWar(ctx, options) {
     }
   }
   const hasAttackRule = options.fleets.some(rule => rule.enabled && rule.roles?.includes('attack'));
-  const ownGuildIdx = hasAttackRule ? await cityWarOwnGuildIdx(ctx) : null;
-  if (hasAttackRule && ownGuildIdx === null) {
+  // 选城与维修都要先知道己方联盟和城市实时归属；没有任何启用规则时不查。
+  const ownState = options.fleets.some(rule => rule.enabled)
+    ? await cityWarOwnState(ctx)
+    : { guildIdx: null, ownCityIds: new Set(), cities: [], homeCityId: null };
+  if (hasAttackRule && ownState.guildIdx === null) {
     // 只有本联盟发起的宣战允许进攻；无法归属时不发送会被服务器拒绝的派舰请求。
     skip(ctx, '无法确认己方联盟序号，跳过城战进攻派遣');
   }
+  const attackDurability = cityWarAttackDurability(ctx);
+  const cityCost = hasAttackRule ? await cityWarCosts(ctx, ownState) : null;
   for (const rule of options.fleets.filter(f => f.enabled)) {
     const fleet = (await idleFleets(ctx)).find(f => !rule.buildingId || rule.buildingId === f.buildingId);
     // 已派出或维修中的前序舰队不能阻塞后续已配置舰队的城战派遣。
     if (!fleet) continue;
+    // 耐久撑不住一场攻城的舰队先修：本轮不再派，等下一轮按最新耐久决定。
+    if (await cityWarRepair(ctx, fleet, options, attackDurability)) continue;
     for (const role of rule.roles ?? []) {
       const cityId = role === 'goto'
         ? rule.gotoCityId
         : role === 'defend'
           ? war.assembleCityId
-          : role === 'attack' && ownGuildIdx !== null
-            ? war.declarations?.find(declaration => idString(declaration.attackGuildIdx) === ownGuildIdx && (options.reattack || !ctx.count(`cityWar.${declaration.cityId}`)))?.cityId
+          : role === 'attack' && ownState.guildIdx !== null
+            ? pickCityWarTarget(ctx, war, ownState, options, cityCost)
             : null;
       if (!cityId) continue;
       if (role === 'defend') {
@@ -673,6 +813,10 @@ async function cityWar(ctx, options) {
         const result = await dispatch(ctx, 'MoveFleetsToCityRequest', { buildingId: [fleet.buildingId], cityId }, [fleet]);
         if (succeeded(result)) {
           ctx.count(`cityWar.${cityId}`, 1);
+          // 出征次数与汽油按已确认的派遣累计，用于今日上限与预算；未确认的派遣不计。
+          ctx.count('cityWar.dispatched', 1);
+          const petrol = cityCost?.costs?.get(Number(cityId)) ?? 0;
+          if (petrol > 0) ctx.count('cityWar.petrol', petrol);
           ctx.record({
             label: `城战派遣 ${fleet.buildingId}`,
             status: result.status,

@@ -27,7 +27,7 @@ const automationLabels = {
   heroes:'指定英雄',levelUpMaxActions:'每轮升级轮数',starUp:'升星',skillLevelUp:'技能升级',skillAdvance:'技能进阶',exclusiveLevelUp:'专武升级',exclusiveStarUp:'专武升星',equipEnhance:'强化所选英雄装备',badgeEnhance:'强化所选英雄徽章',badgeExpItemNum:'徽章经验道具数量',appoint:'委任',positions:'委任位置（按英雄顺序）',watchSkillVideo:'请求英雄广告奖励',universal:'允许万能材料',fragRecruit:'使用碎片招募所选英雄',recruit:'招募',free:'免费次数',tickets:'使用现有券',points:'领取招募积分奖',maxDraws:'每轮最多抽取次数',activate:'激活',suit:'套装',
   breed:'培育',breedSpecies:'培育物种名称',breedMinQuality:'培育最低品质',feed:'喂养',decompose:'放生 / 分解',decomposeBelowQuality:'只处理低于此品质的闲置对象',protectedUids:'保护对象 UID',levelUpTargetLevel:'培养目标等级',advance:'进阶',advanceRooms:'进阶战备室建筑 ID（空为全部）',make:'打造',makeIds:'打造配方 ID',speedUpMinRemainSecs:'剩余秒数达到此值才加速',collectRevenue:'领取博物馆收益',explore:'开新探宝',factor:'探宝倍率',maps:'探宝地图 ID',speedUpDailyLimit:'每日加速次数上限（0 禁止）',speedUpKeepStock:'加速道具保留数量',
   maxActions:'每轮最多挑战次数',stage:'主线',samePowerRetryCount:'同战力战败重试次数',claimReward:'领取章节奖励',arena:'竞技场',sweep:'扫荡',challenge:'挑战',trial:'试炼',heroExp:'英雄经验试炼',forge:'强化石试炼',petExp:'宠物经验试炼',rubySweep:'允许钻石扫荡',league:'联盟赛',reservePoints:'保留挑战券',hangupReward:'领取挂机奖励',danReward:'领取段位奖励',passReward:'领取战令奖励',expedition:'远征',finalReward:'领取最终奖励',freePass:'领取远征战令',challengeStopOnHeroDeath:'英雄阵亡时停止',challengeMinTeamHpPct:'最低队伍血量百分比',dailySweepLimit:'每日扫荡次数（目标）',times:'扫荡次数',
-report:'领取战报',fleet:'舰队',repair:'维修',repairThresholds:'各舰队维修耐久阈值（按列表顺序）',repairSpeedUp:'加速维修（可使用钻石）',repairSpeedUpMinRemainSecs:'维修加速剩余秒数门槛',pirate:'海盗',attack:'挑战',attackTypes:'挑战海盗类型',sweepTypes:'扫荡海盗类型',attackTime:'执行时段',start:'开始时间',end:'结束时间',radar:'雷达',kinds:'雷达事件类型',fixed:'固定事件',resField:'已有资源田配比',oasis:'种子田权重',tank:'汽油田权重',chipMine:'芯片矿',hours:'执行小时（空为全天）',fleets:'舰队规则',treasureLoot:'宝藏掠夺',merchantShip:'搁浅商船（万吨货轮）',retryMinutes:'重新夺取间隔（分钟，0 不重试）',rewardMaterials:'奖励材料筛选',cityWar:'城战',online:'领取在线奖',reattack:'允许重复进攻',worldBoss:'世界 Boss',attackTimes:'每轮挑战次数',limitedBoss:'限时 Boss',challenge:'挑战',challengeReward:'领取挑战奖',trade:'海商王',profitLimit:'航行加速最低累计利润',speedUpDailyLimit:'每日航行加速次数',
+report:'领取战报',fleet:'舰队',repair:'维修',repairThresholds:'各舰队维修耐久阈值（按列表顺序）',repairSpeedUp:'加速维修（可使用钻石）',repairSpeedUpMinRemainSecs:'维修加速剩余秒数门槛',pirate:'海盗',attack:'挑战',attackTypes:'挑战海盗类型',sweepTypes:'扫荡海盗类型',attackTime:'执行时段',start:'开始时间',end:'结束时间',radar:'雷达',kinds:'雷达事件类型',fixed:'固定事件',resField:'已有资源田配比',oasis:'种子田权重',tank:'汽油田权重',chipMine:'芯片矿',hours:'执行小时（空为全天）',fleets:'舰队规则',treasureLoot:'宝藏掠夺',merchantShip:'搁浅商船（万吨货轮）',retryMinutes:'重新夺取间隔（分钟，0 不重试）',rewardMaterials:'奖励材料筛选',cityWar:'城战',online:'领取在线奖',reattack:'允许重复进攻',targetMode:'选城策略',dailyDispatchLimit:'每日出征次数上限',petrol:'城战汽油预算',reserve:'汽油保留量',belowPercent:'维修耐久百分比',maxCost:'单次维修费用上限',worldBoss:'世界 Boss',attackTimes:'每轮挑战次数',limitedBoss:'限时 Boss',challenge:'挑战',challengeReward:'领取挑战奖',trade:'海商王',profitLimit:'航行加速最低累计利润',speedUpDailyLimit:'每日航行加速次数',
   packs:'联盟礼包',guild:'联盟礼包',title:'职级奖励',order:'募兵订单',cityIds:'城市 ID',aid:'互助',receive:'领取帮助',ask:'发起求助',askItems:'求助物品',help:'帮助盟友',helpItems:'帮助物品',helpNicknameKeywords:'盟友昵称关键词',helpMinStock:'帮助后库存保留门槛',helpDailyLimit:'每日帮助次数',tech:'联盟科技',items:'科技 ID',ship:'联盟商船',captain:'应聘船长',crew:'补货登船',qualities:'船只品质',rewardItems:'期望奖励物品',minWaterCoin:'最低水姆币奖励',forbiddenMaterials:'禁用补货材料',relaxFilters:'允许放宽品质与奖励筛选',
   daily:'免费日奖与已有卡权益',weeklyLottery:'周抽奖（领取免费礼包）',uniqueLottery:'每周专属抽奖（领取免费次数）',dailyTask:'任务与活跃度奖励',growth:'成长、支线与成就',events:'成长活动奖励',email:'邮件奖励',midAutumn:'中秋日奖',signIn:'签到',freeGift:'免费礼包',activeReward:'活跃奖励',blindBox:'盲盒',scoreReward:'积分奖',play:'开始新局',keepCards:'保留盲盒卡',catcher:'海底捞月',repeat:'重复挑战最高开放关卡',keepHooks:'保留捞月钩',maxStage:'最高关卡',sweepStage:'扫荡关卡',workshop:'活动工坊',produce:'生产',keepStock:'备货目标',keepClaws:'保留爪钩',blessing:'祝福',boost:'消耗福运结祝福',skinId:'祝福皮肤 ID',boostTimes:'每次祝福数量',keepKnots:'保留福运结',weekOrder:'不差钱商人',buyMissingMaterials:'允许钻石补齐整单缺料',weekLottery:'幸运转盘',prize:'使用现有转盘币',snowball:'走江踏浪',minEnergy:'启动所需能量（瓶）',autoStart:'有能量就连续开局',pve:'水世界牌 PVE',freeMatch:'免费匹配',diamondMatch:'允许钻石匹配',diamondMatchDailyLimit:'每日钻石匹配次数上限（0 禁止）',matchWindows:'匹配时段',dailies:'原有付费日常',dailiesDiscountTickets2x:'2折英雄藏品券'
 };
@@ -71,6 +71,7 @@ const automationSettingCopy = {
   'modules.activity.snowball.autoStart': { note:'开启后，一局结束只要还剩能量就继续开下一局，此时不再要求 100 瓶启动门槛；默认关闭。' },
   season: { note:'赛季 0 不执行依赖赛季配置的玩法；这里填地图场景编号（1 世界地图 / 2 黑潮侵袭），填写后赛季城市和科技等候选项才会刷新。居民订单档位奖励与此设置无关，按 worldId 推导的档位表领取。' },
   vipFreeAd: { note:'仅当前连接角色等级达到 10 级且 VIP 达到 3 级时显示。开启后，在挑战模块已启用、对应试炼已通关且广告额度未用尽时，自动领取英雄经验、强化石、宠物经验试炼的每日免广告额外扫荡奖励，无需开启钻石扫荡；在挂机模块已启用且当日广告额度未用尽时，自动领取挂机收益的每日免广告额外奖励（每日 1 次，无需等待挂机时长）。工厂生产与建筑升级广告加速由“建筑与工厂”中的独立开关控制；英雄广告招募、藏品广告招募和广告商店奖励暂未接入此开关。' },
+  'modules.world.cityWar.petrol.dailyLimit': { title:'每日城战汽油上限', note:'当天城战累计消耗的汽油不超过该值；0 表示不设上限。消耗按舰队到目标城的距离估算，只用于本模块自己的预算判断，不限制其他玩法用油。' },
   'modules.island.adSpeedUp': { title:'使用免广告加速（建造/生产）', note:'仅当前连接角色 VIP 达到 3 级时生效。只对剩余时间严格超过 30 分钟的建造或生产使用：29 分钟跳过，31 分钟执行；每次先登记广告权益，再按抓包确认的 type=3、useNum=0 加速，不消耗加速器或钻石。建筑和工厂分别按 AdvEffectCfg 的每日额度（当前各 3 次）执行，本地按北京时间记录当天已用次数；用完后不再查询广告次数，跨天后自动恢复。' },
   spending: { note:'这是所有钻石操作的共同护栏，不会自行触发消费；每一次消费都要同时通过总开关、总额度、模块额度和余额保留量。' },
   'spending.enabled': { note:'只允许已经在玩法中勾选的钻石操作；关闭时任何模块都不会花钻石。' },
@@ -288,6 +289,11 @@ const automationFieldActionCopy = {
   rewardMaterials:'从游戏材料列表中勾选；只匹配万吨货轮奖励中 type=0 的物品名称。留空时不筛选，任一材料命中才派舰；金币、钻石等货币不会触发派遣',
   online:'只在城战在线奖励开放且尚未领取时领取；不触发进攻或驻守',
   reattack:'允许对已记录的城战目标再次进攻；关闭时同一目标会被本地日记录去重',
+  targetMode:'按“宣战顺序”取列表中第一个可打的本盟目标，或按“在场舰队最少”挑进攻队列最短的一座城；只影响选城顺序，不改动已记录的进攻',
+  dailyDispatchLimit:'限制每天最多成功派遣多少次城战进攻，0 表示不限制；与“允许重复进攻”共用同一份当日计数',
+  reserve:'城战派遣前至少留在手里的汽油数量；低于该值的城战目标会被跳过，不限制其他模块用油',
+  belowPercent:'攻城前若舰队耐久低于自身耐久上限的这个百分比就先维修，同时不低于本场攻城消耗的耐久；0 表示只按攻城消耗判定',
+  maxCost:'单次城战维修的钻石费用上限；0 表示不设上限；超过上限会跳过维修并记录原因，该舰队本轮不进攻',
   attackTimes:'限制每日世界 Boss 挑战次数；不影响领取伤害奖励',
   challengeReward:'领取限时 Boss 已达到条件的挑战奖励；不等同于开启挑战',
   profitLimit:'累计贸易利润不低于该值时才允许航行加速；0 表示利润非负时即可加速，不影响买卖、迁船和领奖',
@@ -616,6 +622,8 @@ function editorInput(key, value) {
   if (key === 'gotoCityId') return editorSelect([{ value:0, label:'自动选择城市' }, ...editorChoices('cityIds')], value, '目标城市');
   if (key === 'levels') return editorSelect([{ value:0, label:'请选择目标品质' }, ...automationOptions.colors], value, '目标品质');
   if (['breedMinQuality','decomposeBelowQuality'].includes(key)) return editorSelect(automationOptions.qualities, value, automationLabels[key], '不指定品质');
+  // 选城策略只有两个语义值，用下拉避免手打 first/fewest 拼错导致校验拒绝保存。
+  if (key === 'targetMode') return editorSelect([{ value:'first', label:'宣战列表顺序取第一个' }, { value:'fewest', label:'在场舰队最少的目标' }], value, '选城策略');
   const input = el('input'); input.type = typeof value === 'boolean' ? 'checkbox' : typeof value === 'number' ? 'number' : ['start','end'].includes(key) ? 'time' : 'text';
   if (input.type === 'checkbox') { input.checked = value; input.setAttribute('role', 'switch'); }
   else input.value = value;

@@ -15,7 +15,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { SERVER, assetUrl } from '../tools/sync-art.mjs';
+import { SERVER, assetUrl, findCacheDir, bundleVersions } from '../tools/sync-art.mjs';
 import { randomUUID } from 'node:crypto';
 import { normalize } from './worlds.mjs';
 import { readWeekOrder } from './activities.mjs';
@@ -1046,14 +1046,28 @@ export function mapPath(scenarioId) {
 
 const mapLoads = new Map();
 
-// 版本来自游戏包 src/settings.0afbd.json 的 assets.bundleVers.world_map。
+// 地图 bundle 的版本 hash 跟着游戏包走：游戏更新后旧 hash 直接 404。
+// 从微信游戏包 src/settings.*.json 的 assets.bundleVers.world_map 取当前版本，
+// 读不到（未安装/未打开过游戏）时退回已知版本，不至于整块地图功能不可用。
+let mapVersionCache = null;
+function worldMapVersion() {
+  if (mapVersionCache) return mapVersionCache;
+  try {
+    const cacheDir = findCacheDir();
+    const versions = cacheDir ? bundleVersions(cacheDir).versions : null;
+    return (mapVersionCache = versions?.world_map ?? '2ca75');
+  } catch {
+    return '2ca75';
+  }
+}
+
 async function fetchMap(file, scenarioId) {
   const getJson = async url => {
     const reply = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!reply.ok) throw new Error('地图下载失败（HTTP ' + reply.status + '）');
     return reply.json();
   };
-  const cfg = await getJson(SERVER + 'remote/world_map/config.2ca75.json');
+  const cfg = await getJson(SERVER + 'remote/world_map/config.' + worldMapVersion() + '.json');
   const entry = Object.entries(cfg.paths).find(([, row]) => row[0] === 'world_map' + scenarioId && cfg.types[row[1]] === 'cc.JsonAsset');
   if (!entry) throw new Error('游戏资源中没有场景 ' + scenarioId + ' 的地图');
   const raw = await getJson(assetUrl('world_map', cfg, Number(entry[0]), 'cc.JsonAsset'));

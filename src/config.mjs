@@ -25,13 +25,15 @@ function cachedPackCandidates() {
   return found;
 }
 
-// 缓存目录里同时躺着 bundle 描述文件和打包好的资源，取最大的那个就是资源包。
+// 小文件是 bundle 描述；资源包更新后可能同样大甚至更小，不能用大小判断版本。
+// 同步副本仅作可离线保留的来源，不能永久遮蔽游戏刚下载的新缓存。
 export function findConfigPack() {
   if (process.env.CW_CONFIG_PACK && fs.existsSync(process.env.CW_CONFIG_PACK)) return process.env.CW_CONFIG_PACK;
-  if (fs.existsSync(CONFIG_PACK_PATH)) return CONFIG_PACK_PATH;
   const candidates = cachedPackCandidates().filter((file) => fs.statSync(file).size > 1_000_000);
+  if (fs.existsSync(CONFIG_PACK_PATH)) candidates.unshift(CONFIG_PACK_PATH);
   if (!candidates.length) return null;
-  return candidates.sort((a, b) => fs.statSync(b).size - fs.statSync(a).size)[0];
+  return candidates.map((file) => ({ file, modified: fs.statSync(file).mtimeMs }))
+    .sort((a, b) => b.modified - a.modified)[0].file;
 }
 
 // 打包格式是嵌套数组，每张表都是 [索引, "表名", {data: [...]}]。递归把带名字的对象捞出来。
