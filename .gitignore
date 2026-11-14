@@ -6,3 +6,7 @@ output/
 
 # ZCode 本地会话数据
 .zcode/
+
+# 控制台运行时日志（由启动.bat 重定向产生）
+console-live.log
+console-live.err.log

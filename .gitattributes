@@ -1,3 +1,6 @@
 * text=auto eol=lf
+# Windows 批处理必须是 CRLF：LF 换行的 .bat 会让 cmd 解析错位（chcp、set 含 "C:\..." 的行会被截断）。
+*.bat text eol=crlf
+*.cmd text eol=crlf
 *.png binary
 *.bin binary
