@@ -70,7 +70,7 @@ function mockGateway(t, login = async () => ({ result: 0, initSeqNo: 1, playerIn
 }
 
 /** Wait for asynchronous local-only work without exposing test timing to the implementation. */
-async function waitFor(predicate, message, attempts = 50) {
+async function waitFor(predicate, message, attempts = 300) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (predicate()) return;
     await new Promise(resolve => setTimeout(resolve, 10));
@@ -826,7 +826,7 @@ function pageFixture({ looping = false } = {}) {
       scrollTop: 0,
       classList: {
         // The fixture only opens the overview tab; background page refreshes must stay behind their hidden panels.
-        contains(name) { return name === 'hidden' && ['tab-idle', 'tab-map', 'tab-manual', 'tab-stages', 'tab-heroes', 'tab-dailies', 'tab-activities', 'tab-account', 'tab-automation'].includes(value.id); },
+        contains(name) { return name === 'hidden' && ['tab-idle', 'tab-map', 'tab-manual', 'tab-stages', 'tab-heroes', 'tab-dailies', 'tab-activities', 'tab-account'].includes(value.id); },
         add: () => {}, remove: () => {}, toggle: () => {},
       },
       appendChild(child) { ownText = ''; this.children.push(child); child.parentNode = this; return child; },

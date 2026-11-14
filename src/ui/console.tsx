@@ -12,7 +12,7 @@ export function idlePanel(tasks: AutoTask[]) {
     <Card>
       <CardHeader>
         <CardTitle>定时挂机</CardTitle>
-        <CardDescription>轮数填 0 表示持续运行。每轮只执行当前账号已开启的任务。</CardDescription>
+        <CardDescription>轮数填 0 表示持续运行。每轮先跑固定日常和已开启的自动化模块，再执行下面勾选的任务。</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="bar">
@@ -26,6 +26,7 @@ export function idlePanel(tasks: AutoTask[]) {
         <div className="dim" id="loop-hint" role="status" />
       </CardContent>
     </Card>
+    {automationCards()}
     <Card>
       <CardHeader>
         <CardTitle>断线重连</CardTitle>
@@ -103,18 +104,24 @@ export function idlePanel(tasks: AutoTask[]) {
         </form>
       </CardContent>}
     </Card>)}</div>
+    {/* 挂机记录容器：page.mjs 的 refreshLoop 每 3 秒写入这里，缺了会抛 null。 */}
+    <details><summary>挂机记录</summary><pre id="loop-view">尚无记录</pre></details>
+    {/* 自动化设置未保存时的浮动入口，跟随挂机页（自动化页已并入本页）。 */}
+    <Button id="automation-floating-save" className="automation-floating-save" type="button" hidden>保存设置</Button>
+    <Button id="automation-back-to-top" className="automation-back-to-top" type="button" hidden><span aria-hidden="true">↑</span>回到顶部</Button>
   </div>)
 }
 
 /**
- * Render the account-scoped automation workspace used for detailed module settings,
- * single-pass execution, and controlled recurring runs.
+ * Account-scoped automation workspace: module selection, plan preview, single-pass
+ * execution, recurring runs and the detailed per-module settings form. Rendered
+ * inside the idle page card stack; the floating controls stay with the idle page.
  */
-export function automationPage() {
-  return renderToStaticMarkup(<div className="grid gap-4">
+function automationCards() {
+  return <>
     <Card>
       <CardHeader>
-        <CardTitle>高级自动化</CardTitle>
+        <CardTitle>自动化模块</CardTitle>
         <CardDescription>设置按账号保存。执行前会按赛季、库存和钻石额度校验条件。</CardDescription>
       </CardHeader>
       <CardContent>
@@ -128,10 +135,22 @@ export function automationPage() {
     <Card>
       <CardHeader><CardTitle>循环模块选择</CardTitle></CardHeader>
       <CardContent>
-        <details className="automation-group"><summary>选择自动化模块和循环间隔</summary><div id="automation-loop-modules" /><div className="bar"><label htmlFor="automation-rounds">轮数</label><Input id="automation-rounds" type="number" min="0" defaultValue="1" className="w-20" /><label htmlFor="automation-every">间隔秒</label><Input id="automation-every" type="number" min="1" defaultValue="60" className="w-20" /><Button id="automation-loop">开始循环</Button></div></details>
+        <details className="automation-group"><summary>只跑所选模块的循环</summary><div id="automation-loop-modules" /><div className="bar"><label htmlFor="automation-rounds">轮数</label><Input id="automation-rounds" type="number" min="0" defaultValue="1" className="w-20" /><label htmlFor="automation-every">间隔秒</label><Input id="automation-every" type="number" min="1" defaultValue="60" className="w-20" /><Button id="automation-loop">开始循环</Button></div></details>
         <div id="automation-settings" />
       </CardContent>
     </Card>
+  </>
+}
+
+/** Standalone markup for the automation cards (kept for callers outside the idle page). */
+export function automationCard() {
+  return renderToStaticMarkup(<div className="grid gap-4">{automationCards()}</div>)
+}
+
+/** Legacy standalone automation page export; the console merged it into the idle page. */
+export function automationPage() {
+  return renderToStaticMarkup(<div className="grid gap-4">
+    {automationCards()}
     <Button id="automation-floating-save" className="automation-floating-save" type="button" hidden>保存设置</Button>
     <Button id="automation-back-to-top" className="automation-back-to-top" type="button" hidden><span aria-hidden="true">↑</span>回到顶部</Button>
   </div>)

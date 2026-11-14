@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { automationTasks } from './automation.mjs';
 import { operationLabels } from './operation-labels.mjs';
 import { iconEntry } from './art.mjs';
-import { rail, topbar, journal, dialogs, templates, overviewPage, manualPage, heroesPage, dailiesPage, activitiesPage, accountPage, automationPage, idlePanel, stagePanel, mapPage } from './ui/dist/console.mjs';
+import { rail, topbar, journal, dialogs, templates, overviewPage, manualPage, heroesPage, dailiesPage, activitiesPage, accountPage, idlePanel, stagePanel, mapPage } from './ui/dist/console.mjs';
 import { AUTOMATION_SCRIPT } from './automation-ui.mjs';
 const componentCss = readFileSync(new URL('./ui/dist/theme.css', import.meta.url), 'utf8');
 const consoleCss = readFileSync(new URL('./console.css', import.meta.url), 'utf8');
@@ -59,10 +59,6 @@ ${topbar()}
     ${dailiesPage()}
   </section>
 
-  <section id="tab-automation" class="hidden">
-    ${automationPage()}
-  </section>
-
   <section id="tab-account" class="hidden">
     ${accountPage()}
   </section>
@@ -114,7 +110,8 @@ async function call(path, options) {
       const error = new Error(data.error || res.statusText);
       if (data.log && (!data.log.account || account === current)) appendLog(data.log);
       error.logged = true;
-      if (!data.log && account === current) reportError(new Error(data.error || ('控制台返回 HTTP ' + res.status)), path);
+      // quiet 表示服务端判定这是预期状态（挂机占着账号、尚未连接）：页面自己不用再记一条错误。
+      if (!data.log && !data.quiet && account === current) reportError(new Error(data.error || ('控制台返回 HTTP ' + res.status)), path);
       throw error;
     }
     return data;
@@ -215,7 +212,8 @@ function chip(status, text) {
 }
 
 // ---- 弹窗 ------------------------------------------------------------------
-// 抓包要改系统设置，所以确认做得重一点：先勾选，再等倒计时，两样都满足才能点。
+// 默认是二次确认：点开弹窗、看清内容、再点「确认」才执行。
+// 只有会改系统设置的动作用 { ack: true }：先勾选、再等 3 秒，两样都满足才能点。
 
 let modalTimer = null;
 function closeModal() {
@@ -227,29 +225,39 @@ function closeModal() {
 function canConfirm(seconds) {
   return isChecked($('m-ack')) && seconds <= 0;
 }
-function openConfirm(title, bodyNodes, onOk) {
+function openConfirm(title, bodyNodes, onOk, options = {}) {
+  const ack = options.ack === true;
   $('m-title').textContent = title;
   const body = clear($('m-body'));
   for (const node of bodyNodes) body.appendChild(node);
-  setAck(false);
-  $('m-ok').disabled = true;
-  let left = 3;
-  $('m-count').textContent = '请先勾选，' + left + ' 秒后可确认';
-  modalTimer = setInterval(() => {
-    left -= 1;
-    $('m-ok').disabled = !canConfirm(left);
-    $('m-count').textContent = left > 0 ? '请先勾选，' + left + ' 秒后可确认' : (isChecked($('m-ack')) ? '' : '还需要勾选上面的选项');
-    if (left <= 0) {
-      clearInterval(modalTimer);
-      modalTimer = null;
-    }
-  }, 1000);
-  $('m-ack').onclick = () => {
-    setAck(!isChecked($('m-ack')));
-    $('m-ok').disabled = !canConfirm(left);
-    if (left <= 0 && !isChecked($('m-ack'))) $('m-count').textContent = '还需要勾选上面的选项';
-    else if (left <= 0) $('m-count').textContent = '';
-  };
+  if (modalTimer) clearInterval(modalTimer);
+  modalTimer = null;
+  $('m-ack-row').hidden = !ack;
+  setAck(!ack);
+  if (!ack) {
+    $('m-ok').disabled = false;
+    $('m-count').textContent = '确认后立即执行，点「取消」不会做任何改动。';
+    $('m-ack').onclick = null;
+  } else {
+    $('m-ok').disabled = true;
+    let left = 3;
+    $('m-count').textContent = '请先勾选，' + left + ' 秒后可确认';
+    modalTimer = setInterval(() => {
+      left -= 1;
+      $('m-ok').disabled = !canConfirm(left);
+      $('m-count').textContent = left > 0 ? '请先勾选，' + left + ' 秒后可确认' : (isChecked($('m-ack')) ? '' : '还需要勾选上面的选项');
+      if (left <= 0) {
+        clearInterval(modalTimer);
+        modalTimer = null;
+      }
+    }, 1000);
+    $('m-ack').onclick = () => {
+      setAck(!isChecked($('m-ack')));
+      $('m-ok').disabled = !canConfirm(left);
+      if (left <= 0 && !isChecked($('m-ack'))) $('m-count').textContent = '还需要勾选上面的选项';
+      else if (left <= 0) $('m-count').textContent = '';
+    };
+  }
   $('m-ok').onclick = async () => {
     const run = onOk;
     closeModal();
@@ -261,7 +269,7 @@ function openConfirm(title, bodyNodes, onOk) {
     }
   };
   $('modal').showModal();
-  $('m-ack').focus();
+  (ack ? $('m-ack') : $('m-ok')).focus();
 }
 $('m-cancel').onclick = closeModal;
 $('modal').oncancel = event => { event.preventDefault(); closeModal(); };
@@ -679,7 +687,7 @@ $('account').onchange = async () => {
   refreshStages();
   refreshLoop();
   await call('/api/accounts/active', { method: 'POST', body: JSON.stringify({ confirm: true, id: current }) });
-  if (!$('tab-automation').classList.contains('hidden')) await loadAutomation();
+  if (!$('tab-idle').classList.contains('hidden')) await loadAutomation();
   subscribe();
   await loadMessages();
   refreshOverview();
@@ -939,7 +947,7 @@ function renderOverviewMerchantShip(data) {
   const claimedValue = claimGroups.length ? () => merchantClaimList(claimGroups) : null;
   const claimedLabel = '今日已领' + (merchant.claimedShips > 0 ? '（' + merchant.claimedShips + ' 艘）' : '');
   renderOverviewRows('overview-merchant-ship', [
-    ['今日领奖次数', times],
+    ['今日已领奖次数', times],
     ['状态', status],
     ['当前奖品', rewardValue],
     [claimedLabel, claimedValue],
@@ -1045,6 +1053,39 @@ function renderOverview(data, cityWarStats = null) {
     crops.appendChild(node);
   }
   if (!crops.childElementCount) crops.appendChild(el('span', 'dim', '暂无农作物数据'));
+
+  const factoryStock = clear($('factory-stock'));
+  // 每个工厂一块：有库存的成品按数量降序直接列出（满仓红框，与农作物低库存提示区分），
+  // 零库存的成品折叠在「未生产」里，避免十几座工厂把总览撑成几屏空数据。
+  for (const group of data.factoryStock || []) {
+    const section = el('div', 'factory-stock-group');
+    section.appendChild(el('h5', null, (group.type || group.buildingId) + '（' + group.buildingId + '）'));
+    const capacity = group.capacity == null ? '-' : fmt(group.capacity);
+    const products = group.products || [];
+    const buildCell = (product) => {
+      const productCell = cell(product.icon, 34, product.itemId, fmt(product.num) + ' / ' + capacity);
+      // 满仓会挡住下一次收成，因此单独高亮；上限缺失时不做猜测。
+      const amount = Number(product.num);
+      if (group.capacity != null && Number.isFinite(amount) && amount >= Number(group.capacity)) productCell.classList.add('stock-full');
+      return productCell;
+    };
+    const stocked = products.filter((product) => Number(product.num) > 0).sort((a, b) => Number(b.num) - Number(a.num));
+    const empty = products.filter((product) => !(Number(product.num) > 0));
+    const groupGrid = el('div', 'material-panel');
+    for (const product of stocked) groupGrid.appendChild(buildCell(product));
+    if (!groupGrid.childElementCount) groupGrid.appendChild(el('span', 'dim', '该工厂当前没有成品库存'));
+    section.appendChild(groupGrid);
+    if (empty.length) {
+      const more = el('details', 'material-more');
+      more.appendChild(el('summary', null, '未生产的 ' + empty.length + ' 项成品'));
+      const moreGrid = el('div', 'material-panel');
+      for (const product of empty) moreGrid.appendChild(buildCell(product));
+      more.appendChild(moreGrid);
+      section.appendChild(more);
+    }
+    factoryStock.appendChild(section);
+  }
+  if (!factoryStock.childElementCount) factoryStock.appendChild(el('span', 'dim', '暂无工厂库存数据'));
 
   const heroes = clear($('hero-strip'));
   for (const hero of (data.heroes && data.heroes.list) || []) {
@@ -1939,7 +1980,7 @@ async function beginCapture(platform) {
     renderCapture(next);
     if (capturePoll) clearInterval(capturePoll);
     capturePoll = setInterval(pollCapture, 1500);
-  });
+  }, { ack: true });
 }
 
 $('cap-stop').onclick = async () => {
@@ -1989,7 +2030,7 @@ document.querySelectorAll('#tabs button').forEach((button) => {
       section.classList.toggle('hidden', section.id !== 'tab-' + button.dataset.tab);
     }
     $('page-title').textContent = button.textContent;
-    // The automation page owns floating controls that must not remain visible after a tab switch.
+    // The idle page（已并入自动化卡片）owns floating controls that must not remain visible after a tab switch.
     updateAutomationBackToTop();
     refreshProgression();
     if (button.dataset.tab === 'overview') refreshOverview();
@@ -1999,10 +2040,13 @@ document.querySelectorAll('#tabs button').forEach((button) => {
     }
     if (button.dataset.tab === 'manual') refreshManualWorld();
     if (button.dataset.tab === 'map') refreshWorldMap();
-    if (button.dataset.tab === 'idle') refreshLoop();
+    if (button.dataset.tab === 'idle') {
+      refreshLoop();
+      // 自动化设置已并入挂机页：首次进入或换账号才请求，避免每次切页用服务端值覆盖未保存的编辑。
+      if (!automationSettings || automationAccount !== current) loadAutomation().catch(error => $('automation-hint').textContent = error.message);
+    }
     if (button.dataset.tab === 'activities') refreshActivities();
     if (button.dataset.tab === 'stages') refreshStages();
-    if (button.dataset.tab === 'automation') loadAutomation().catch(error => $('automation-hint').textContent = error.message);
   };
 });
 

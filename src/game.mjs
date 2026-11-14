@@ -105,8 +105,26 @@ export async function collectState(client, protocol, { timeout = 15000, onResult
 
 const asArray = (value) => (Array.isArray(value) ? value : []);
 const CROP_STORAGE_BASE_CAPACITY = 250;
+const PRODUCT_STORAGE_BASE_CAPACITY = 50;
+const PRODUCT_STORAGE_PARAM = '产品存量初始上限';
 const CROP_STORAGE_VIP_EFFECT = '加工品存量上限';
 const CROP_STORAGE_VIP_EFFECT_UNIT = 5;
+
+/**
+ * 读取 VIP 配置里的「加工品存量上限」加成，农作物与工厂成品共用这一特权。
+ *
+ * @param {object|null} config 游戏配置表。
+ * @param {number} vipLevel 当前角色的 VIP 等级。
+ * @returns {number} 可叠加到库存基础值上的额外库存位。
+ */
+function storageVipBonus(config, vipLevel) {
+  const level = Math.max(0, Math.trunc(Number(vipLevel) || 0));
+  const vipConfig = (config?.tables?.VipLevelCfg?.data ?? [])
+    .filter((row) => Number(row.level) <= level)
+    .sort((a, b) => Number(b.level) - Number(a.level))[0];
+  const effect = asArray(vipConfig?.effects).find(([effectId]) => effectId === CROP_STORAGE_VIP_EFFECT);
+  return Math.max(0, Number(effect?.[1]) || 0) * CROP_STORAGE_VIP_EFFECT_UNIT;
+}
 
 /**
  * 根据当前 VIP 等级计算农作物库存上限。
@@ -118,14 +136,24 @@ const CROP_STORAGE_VIP_EFFECT_UNIT = 5;
  * @returns {number} 当前角色可持有的单种农作物上限。
  */
 export function cropStorageCapacity(config, vipLevel = 0) {
-  const level = Math.max(0, Math.trunc(Number(vipLevel) || 0));
-  const vipConfig = (config?.tables?.VipLevelCfg?.data ?? [])
-    .filter((row) => Number(row.level) <= level)
-    .sort((a, b) => Number(b.level) - Number(a.level))[0];
-  const effect = asArray(vipConfig?.effects).find(([effectId]) => effectId === CROP_STORAGE_VIP_EFFECT);
-  const bonus = Math.max(0, Number(effect?.[1]) || 0) * CROP_STORAGE_VIP_EFFECT_UNIT;
-  return CROP_STORAGE_BASE_CAPACITY + bonus;
+  return CROP_STORAGE_BASE_CAPACITY + storageVipBonus(config, vipLevel);
 }
+
+/**
+ * 计算工厂成品的单种存量上限。
+ * 基础值取 GameParamCfg 的「产品存量初始上限」（当前配置 50），再叠加同一 VIP 加成；
+ * 与农作物不同，成品基础容量不随农作物上限变化。
+ *
+ * @param {object|null} config 游戏配置表。
+ * @param {number} vipLevel 当前角色的 VIP 等级。
+ * @returns {number} 当前角色可持有的单种成品上限。
+ */
+export function productStorageCapacity(config, vipLevel = 0) {
+  const base = Number((config?.tables?.GameParamCfg?.data ?? [])
+    .find((row) => row.paramName === PRODUCT_STORAGE_PARAM)?.paramValue);
+  return (Number.isFinite(base) ? base : PRODUCT_STORAGE_BASE_CAPACITY) + storageVipBonus(config, vipLevel);
+}
+
 
 /** 将资源/道具奖励压成状态页可直接展示的短结构。 */
 function summarizeAssets(value) {
@@ -257,6 +285,28 @@ export function summarize(state, { now = Date.now() / 1000, config = null, scena
     capacity: cropCapacity,
   }));
 
+  // 工厂成品库存按工厂分组，便于总览直接对照每座工厂能产出的成品存量。
+  // 成品上限来自 GameParamCfg 的基础值加 VIP 加成，与农作物共用一个特权但基础容量不同。
+  const productCapacity = productStorageCapacity(config, cropVipLevel);
+  const produceRows = config?.tables?.BuildingProduceCfg?.data ?? [];
+  const factoryStock = buildings
+    .filter((building) => building.factory)
+    .map((building) => {
+      const type = resolveBuildingType(building.buildingId);
+      const itemIds = [...new Set(produceRows
+        .filter((row) => row.buildType === type)
+        .map((row) => row.itemId))];
+      return {
+        buildingId: building.buildingId,
+        type,
+        capacity: productCapacity,
+        products: itemIds.map((itemId) => ({
+          itemId,
+          num: items.find((item) => (item.itemId ?? item.id) === itemId)?.num ?? 0,
+        })),
+      };
+    });
+
   return {
     resources: asArray(q.AllResourceRequest?.list).map((entry) => ({
       res: entry.res,
@@ -270,6 +320,7 @@ export function summarize(state, { now = Date.now() / 1000, config = null, scena
     },
     materials,
     crops,
+    factoryStock,
     heroes: {
       count: heroes.length,
       power: heroes.reduce((sum, hero) => sum + hero.power, 0),

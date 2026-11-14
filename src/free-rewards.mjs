@@ -261,7 +261,14 @@ const weeklyHandlers = {
   3: { weekHeroStar: async (client, config, row, allowed, report) => {
     let view = await weekHeroStarState(client, config, row);
     while (view.ready && allowed('weekHeroStar')) {
-      const reply = await client.request('WeekHeroStarGotRewardRequest', {}, 'WeekHeroStarGotRewardResponse');
+      let reply;
+      try {
+        reply = await client.request('WeekHeroStarGotRewardRequest', {}, 'WeekHeroStarGotRewardResponse');
+      } catch (error) {
+        // 服务端按自己的展示英雄核对星级。被明确拒绝时记成跳过并停手，不把整轮挂机记成失败。
+        if (error.prompt) { report({ label: '英雄升星礼包', skipped: true, reason: error.message }); return; }
+        throw error;
+      }
       if (!(reply.gotStage > view.gotStage)) throw new Error('服务端未确认升星档位');
       report({ label: withReward('英雄升星 · 已领至第 ' + reply.gotStage + ' 档', replyAssets(config, reply.reward)), ok: true });
       view = await weekHeroStarState(client, config, row);

@@ -1223,7 +1223,7 @@ function renderAutomationStatus(data) {
 
 /** 运行中的状态轮询不触碰游戏网关，页面关闭时服务端仍按停止信号管理。 */
 async function refreshAutomation() {
-  if (!current || $('tab-automation').classList.contains('hidden')) return;
+  if (!current || $('tab-idle').classList.contains('hidden')) return;
   const account=current;
   try { const data=await call('/api/automation/status'); if(account===current)renderAutomationStatus(data); }catch(error){if(account===current)$('automation-hint').textContent=error.message;}
 }
@@ -1279,8 +1279,8 @@ function startAutomationLoop() {
 }
 /** 仅在自动化页离开整页顶部后显示入口；编辑器和日志内部滚动不影响它。 */
 function updateAutomationBackToTop() {
-  $('automation-back-to-top').hidden = $('tab-automation').classList.contains('hidden') || window.scrollY <= 0;
-  $('automation-floating-save').hidden = $('tab-automation').classList.contains('hidden') || !automationSettingsDirty;
+  $('automation-back-to-top').hidden = $('tab-idle').classList.contains('hidden') || window.scrollY <= 0;
+  $('automation-floating-save').hidden = $('tab-idle').classList.contains('hidden') || !automationSettingsDirty;
 }
 
 /** 标记当前自动化表单存在未保存改动，并同步浮动保存入口。 */

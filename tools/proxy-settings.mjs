@@ -8,7 +8,10 @@ export const KEY = process.env.CW_REG_KEY
   ?? 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
 export const BACKUP = process.env.CW_PROXY_BACKUP
   ?? path.join(os.homedir(), '.cw-ca', 'proxy-backup.json');
-const VALUES = ['ProxyEnable', 'ProxyServer', 'ProxyOverride'];
+// AutoConfigURL 也要管：Chromium 系容器（微信 4.x 的 WeChatAppEx）在 WinINET
+// 里存在 PAC 脚本时走 PAC，会直接忽略 ProxyEnable/ProxyServer。本机挂着
+// Clash 的 http://127.0.0.1:7897/pac，只改手动代理的话流量根本进不了采集端口。
+const VALUES = ['ProxyEnable', 'ProxyServer', 'ProxyOverride', 'AutoConfigURL'];
 
 export function pointsToCapture(values, port) {
   if (Number(values.ProxyEnable) !== 1) return false;
@@ -20,13 +23,20 @@ export function pointsToCapture(values, port) {
 
 function equals(name, left, right) {
   if (name === 'ProxyEnable' && left !== undefined && right !== undefined) return Number(left) === Number(right);
+  // AutoConfigURL 的"清空"在注册表里就是删值，读回来是 undefined，按空串比。
+  if (name === 'AutoConfigURL') return (left ?? '') === (right ?? '');
   return left === right;
 }
 
 export function prepareCaptureProxy(settings, port) {
   const original = settings.readCurrent();
   if (pointsToCapture(original, port)) throw new Error('系统代理已指向本机采集端口，请先恢复上次的代理设置，避免覆盖原始备份');
-  const target = { ProxyEnable: '0x1', ProxyServer: `127.0.0.1:${port}`, ProxyOverride: '<local>' };
+  const target = {
+    ProxyEnable: '0x1',
+    ProxyServer: `127.0.0.1:${port}`,
+    ProxyOverride: '<local>',
+    AutoConfigURL: '',
+  };
   let ready = false;
   let pending = [];
   return {
@@ -68,7 +78,7 @@ export function readCurrent() {
   const out = execFileSync('reg', ['query', KEY], { stdio: ['ignore', 'pipe', 'pipe'] }).toString();
   const values = {};
   for (const line of out.split(/\r?\n/)) {
-    const match = line.match(/^\s*(ProxyEnable|ProxyServer|ProxyOverride)\s+REG_\w+\s+(.*)$/);
+    const match = line.match(/^\s*(ProxyEnable|ProxyServer|ProxyOverride|AutoConfigURL)\s+REG_\w+\s+(.*)$/);
     if (match) values[match[1]] = match[2].trim();
   }
   return values;
@@ -107,6 +117,8 @@ export function setProxy(host, port, { backedUp = false } = {}) {
   reg(['add', KEY, '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '1', '/f']);
   reg(['add', KEY, '/v', 'ProxyServer', '/t', 'REG_SZ', '/d', `${host}:${port}`, '/f']);
   reg(['add', KEY, '/v', 'ProxyOverride', '/t', 'REG_SZ', '/d', '<local>', '/f']);
+  // 清掉 PAC，否则 Chromium 系客户端（微信 4.x 小程序容器）仍然按 PAC 走直连。
+  reg(['delete', KEY, '/v', 'AutoConfigURL', '/f']);
   return readCurrent();
 }
 

@@ -1,6 +1,6 @@
 import * as React from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Compass, LayoutDashboard, Timer, Hand, Flag, Swords, CalendarDays, ContactRound, Gift, ScrollText, SlidersHorizontal, X, Map as MapIcon } from "lucide-react"
+import { Compass, LayoutDashboard, Timer, Hand, Flag, Swords, CalendarDays, ContactRound, Gift, ScrollText, X, Map as MapIcon } from "lucide-react"
 import { Button } from "./button"
 import { Badge } from "./badge"
 import { Card, CardContent, CardHeader, CardTitle } from "./card"
@@ -14,7 +14,7 @@ const navGroups = [
   // 高级自动化有独立的账号设置与执行记录，不能和通用挂机开关混在同一个入口。
   ["操作", [["manual", "单次操作", "icon_btn_bottom_bag", Hand], ["stages", "挑战", "icon_btn_bottom_battle", Flag],
     ["heroes", "英雄", "icon_btn_bottom_hero", Swords], ["dailies", "日常", "icon_btn_star", CalendarDays],
-    ["activities", "活动", "icon_activity_week_month", Gift], ["automation", "自动化", "icon_btn_moreFunc", SlidersHorizontal]]],
+    ["activities", "活动", "icon_activity_week_month", Gift]]],
   ["管理", [["account", "账号", "icon_btn_moreFunc", ContactRound]]],
 ] as const
 
@@ -78,7 +78,7 @@ export function dialogs() {
     <dialog id="modal" aria-labelledby="m-title"><Card>
       <CardHeader><CardTitle id="m-title" /></CardHeader>
       <CardContent><div id="m-body" />
-        <div className="bar"><Checkbox id="m-ack" className="p-0" /><label htmlFor="m-ack">我已核对当前账号和本次操作</label></div>
+        <div className="bar" id="m-ack-row"><Checkbox id="m-ack" className="p-0" /><label htmlFor="m-ack">我已核对当前账号和本次操作</label></div>
         <div className="bar"><Button id="m-ok" disabled>确认</Button><Button id="m-cancel" variant="outline">取消</Button><span id="m-count" className="dim" /></div>
       </CardContent>
     </Card></dialog>

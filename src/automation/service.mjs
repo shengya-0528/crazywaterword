@@ -1,6 +1,7 @@
 import { LABELS, MODULES, loadLedger, loadSettings, validateSettings, accountSpending, defaultSettings, selectModules, businessDate } from './settings.mjs';
 import { amount, createContext, withRoleLock } from './context.mjs';
 import * as base from './base.mjs';
+import { confirmFarmPlant } from './base.mjs';
 import * as cultivation from './cultivation.mjs';
 import { battle } from './battle.mjs';
 import { world } from './world.mjs';
@@ -338,6 +339,13 @@ export async function legacyAction(ctx, step) {
     QuickGotReadEmailRequest: ['EmailBoxRequest', s => s.email, { pageNo: 0 }],
     ChallengeResFieldRequest: ['MyResFieldsRequest', s => s.info],
     GiveUpResFieldRequest: ['MyResFieldsRequest', s => s.info],
+    // 播种没有专用回包，只能按地块读回；服务端全量快照比推送慢，确认交给 confirmFarmPlant。
+    FarmPlantRequest: ['OnWaterRequest', s => s.building?.find(building => building.buildingId === step.body.args?.[0]?.buildingId)?.farm?.productId ?? null],
+    // 农田播种无专用 Response（服务端只推 SCUpdateWaterBuilding + OkResponse），
+    // 旧计划走这里时必须读回目标地块的 farm 状态，否则新上下文会因缺 confirm 判未确认而停链。
+    FarmPlantRequest: ['OnWaterRequest', s => s.building?.find(b => b.buildingId === step.body.args?.[0]?.buildingId)?.farm],
+    // 海盗扫荡同样无专用 Response；成功后该海盗从 AllPirateResponse.pirates 消失，按 uid 读回确认。
+    PirateSweepRequest: ['AllPirateRequest', s => s.pirates?.find(p => JSON.stringify(p.uid) === JSON.stringify(step.body.uid)), {}],
   };
   let state = states[step.request];
   if (!state && /Building|Factory|WorkerOrder/.test(step.request)) state = ['OnWaterRequest', s => {
@@ -381,6 +389,11 @@ export async function legacyAction(ctx, step) {
     return true;
   };
   const options = { label: step.note ?? step.label, response: step.response, expenses, allowed };
+  if (step.request === 'FarmPlantRequest') {
+    // 种植没有专用回包，服务端快照落后于推送；沿用挂机模块的读回确认，避免把已种下的请求记成未确认。
+    const [plot] = step.body.args ?? [];
+    options.confirm = () => confirmFarmPlant(ctx, plot?.buildingId, plot?.productId);
+  }
   let result;
   if (state) result = await mutate(ctx, step.request, step.body, state[0], state[1], { ...options, stateBody: state[2] });
   else result = await ctx.action(step.request, step.body, options);

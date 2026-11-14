@@ -44,6 +44,10 @@ try {
     return res.json();
   };
 
+  // 总览是只读快照接口，不主动重连；先显式连接一次，后续刷新都复用这条连接。
+  const connect = await fetch('http://127.0.0.1:' + app.server.address().port + '/api/connect?account=a', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(10000) });
+  assert.equal(connect.status, 200);
+
   assert.equal(toNumber((await overview()).player.power), 294225, '总览应显示服务端战力，而不是登录快照');
   assert.equal(asked.at(-1), playerIdText, 'playerId 不能经过不安全的数字转换');
 

@@ -7,7 +7,7 @@ import vm from 'node:vm';
 import { after, test } from 'node:test';
 import { loadProtocol } from '../src/proto.mjs';
 import { fields } from '../tools/describe.mjs';
-import { summarize } from '../src/game.mjs';
+import { summarize, productStorageCapacity } from '../src/game.mjs';
 
 // 固定隔离目录，不读取真实账号或活动记录；模拟网关不创建 WebSocket。
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-automation-'));
@@ -800,6 +800,38 @@ test('overview: crop inventory includes zero values and its base capacity', () =
   assert.match(PAGE, /data\.crops/);
 });
 
+/** 总览的工厂成品库存按工厂分组，上限取 GameParamCfg 基础值加 VIP 加成。 */
+test('overview: factory product inventory groups finished goods by factory and uses the product cap', () => {
+  const config = { tables: {
+    BuildingCfg: { data: [{ buildingType: '军工厂', name: '军工厂' }] },
+    BuildingProduceCfg: { data: [
+      { buildType: '军工厂', itemId: '耐火砖' },
+      { buildType: '军工厂', itemId: '炮弹' },
+      { buildType: '食品厂', itemId: '食品' },
+    ] },
+    GameParamCfg: { data: [{ paramName: '产品存量初始上限', paramValue: 50 }] },
+    VipLevelCfg: { data: [{ level: 0, effects: [] }, { level: 3, effects: [['加工品存量上限', 2]] }] },
+  } };
+  const view = summarize({ ok: {
+    AllItemRequest: { items: [{ itemId: '耐火砖', num: 12 }, { itemId: '炮弹', num: 50 }] },
+    OnWaterRequest: { building: [{ buildingId: '1军工厂', factory: { autoProductId: '耐火砖', factoryQ: [], finishedProducts: [] } }] },
+  } }, { config });
+  // 成品上限是 50，不沿用农作物的 250；未持有的成品补 0。
+  assert.deepEqual(view.factoryStock, [{
+    buildingId: '1军工厂',
+    type: '军工厂',
+    capacity: 50,
+    products: [{ itemId: '耐火砖', num: 12 }, { itemId: '炮弹', num: 50 }],
+  }]);
+  // VIP 的「加工品存量上限」每单位 5 个库存位，基础值仍是 GameParamCfg 的 50。
+  assert.equal(productStorageCapacity(config, 3), 60);
+  assert.equal(productStorageCapacity(config, 0), 50);
+  assert.match(PAGE, /工厂成品库存（当前 \/ 上限）/);
+  // 零库存成品折叠在 details 里，页面只靠这几个类名维持分组与折叠结构。
+  assert.match(PAGE, /material-more/);
+  assert.match(PAGE, /stock-full/);
+});
+
 test('overview: production panel exposes every farm crop and factory queue item', () => {
   const view = summarize({ ok: {
     OnWaterRequest: { building: [
@@ -1236,8 +1268,27 @@ test('farm: delayed OnWater update confirms a single plant request within the po
   assert.ok(waterReads >= 5);
 });
 
-/** 同一地块的不同作物待确认记录也必须阻止写入，但不能终止其他自动化模块。 */
-test('farm: pending plant for a different crop blocks the same field without stopping automation', async () => {
+/**
+ * 服务端会先把种植结果推成 SCUpdateWaterBuilding，OnWater 全量快照可能还停在旧状态。
+ * 只认快照会把已被接受的种植记成未确认，所以推送与快照都必须能作为确认依据。
+ */
+test('farm: SCUpdateWaterBuilding push confirms a plant while the snapshot stays stale', async () => {
+  const f = await moduleRun('farm', { plant: true, cropPriorities: { 玉米: 1 }, cropKeepStock: { 玉米: 5 } }, ({ ctx, client }) => {
+    table(ctx, 'FarmlandPlantCfg', [{ id: '玉米', material: ['种子', 1], produceNum: 5 }]);
+    client.items.set('种子', 1);
+  }, { states: { OnWaterRequest: { building: [{ buildingId: '1农田', farm: {} }] } }, handlers: {
+    // 快照始终返回空田，只有推送反映真实的种植结果。
+    FarmPlantRequest: async (_body, _response, client) => client.emit('message', {
+      name: 'SCUpdateWaterBuilding',
+      body: { building: [{ buildingId: '1农田', farm: { productId: '玉米', ripeTime: 1 } }] },
+    }),
+  } });
+  assert.equal(f.client.calls.filter(call => call.name === 'FarmPlantRequest').length, 1);
+  assert.equal(f.ctx.results.find(row => row.request === 'FarmPlantRequest')?.status, 'success');
+  assert.equal(f.ctx.stop.aborted, false);
+});
+
+/** 同一地块的不同作物待确认记录也必须阻止写入，但不能终止其他自动化模块。 */test('farm: pending plant for a different crop blocks the same field without stopping automation', async () => {
   const f = fixture({ states: { OnWaterRequest: { building: [{ buildingId: '1农田', farm: {} }] } } });
   f.settings.modules.farm.enabled = true;
   f.settings.modules.farm.plant = true;
@@ -1253,7 +1304,54 @@ test('farm: pending plant for a different crop blocks the same field without sto
     await HANDLERS.farm(f.ctx, f.settings.modules.farm);
     assert.equal(f.client.calls.filter(call => call.name === 'FarmPlantRequest').length, 0);
     assert.equal(f.ctx.stop.aborted, false);
-    assert.equal(f.ctx.results.find(row => row.request === 'FarmPlantRequest')?.reason, '该农田上次种植结果未确认，禁止重复提交');
+    assert.equal(f.ctx.results.find(row => row.request === 'FarmPlantRequest')?.reason, '上一次种植仍在核对中（最多 3 轮），本轮不重复提交');
+  } finally { f.ctx.dispose(); }
+});
+
+/**
+ * 旧版本留下的待确认种植可能永远等不到「同地块同作物」的证据（作物被换掉或地块已空）。
+ * 连续空田必须能放弃记录，否则这块田会被永久锁死、再也无法种植。
+ */
+test('farm: an unconfirmed plant that never lands is abandoned after repeated empty snapshots', async () => {
+  const f = fixture({ dryRun: true, states: { OnWaterRequest: { building: [{ buildingId: '1农田', farm: {} }] } } });
+  f.settings.modules.farm.enabled = true;
+  f.settings.modules.farm.plant = true;
+  f.settings.modules.farm.cropPriorities = { 小麦: 1 };
+  f.settings.modules.farm.cropKeepStock = { 小麦: 5 };
+  table(f.ctx, 'FarmlandPlantCfg', [{ id: '小麦', material: ['小麦种子', 1], produceNum: 5 }]);
+  f.client.items.set('小麦种子', 1);
+  const key = 'FarmPlantRequest:{"args":[{"buildingId":"1农田","productId":"玉米"}]}';
+  f.ctx.ledger.pending[key] = { token: 'pending-corn', ruby: 0, module: 'farm', date: businessDate(f.args.now()) };
+  try {
+    await f.ctx.refreshStock();
+    for (const round of [1, 2]) {
+      await HANDLERS.farm(f.ctx, f.settings.modules.farm);
+      assert.ok(f.ctx.ledger.pending[key], `第 ${round} 轮仍应保留待确认记录`);
+      assert.equal(f.ctx.results.some(row => row.request === 'FarmPlantRequest' && row.status === 'planned'), false);
+    }
+    await HANDLERS.farm(f.ctx, f.settings.modules.farm);
+    assert.equal(f.ctx.ledger.pending[key], undefined);
+    assert.equal(f.ctx.results.find(row => row.status === 'failed')?.reason, '连续 3 轮未见 玉米 落地，放弃未确认记录以重新种植');
+    // 记录放掉后同一轮必须能重新排种植，否则这块田只是换了个地方继续荒着。
+    const replant = f.ctx.results.filter(row => row.request === 'FarmPlantRequest' && row.status === 'planned');
+    assert.equal(replant.length, 1);
+    assert.ok(replant[0].body?.args?.[0]?.productId === '小麦' || String(replant[0].label ?? '').includes('小麦'));
+    assert.equal(f.ctx.memory('farm.pending.emptyRounds')[key], undefined);
+  } finally { f.ctx.dispose(); }
+});
+
+/** 地块已经种上别的作物时旧记录不可能再生效，应当立即放掉而不是继续挡住收割后的下一轮种植。 */
+test('farm: a pending plant for a field already holding another crop is released immediately', async () => {
+  const f = fixture({ dryRun: true, states: { OnWaterRequest: { building: [{ buildingId: '1农田', farm: { productId: '土豆' } }] } } });
+  f.settings.modules.farm.enabled = true;
+  f.settings.modules.farm.plant = false;
+  const key = 'FarmPlantRequest:{"args":[{"buildingId":"1农田","productId":"玉米"}]}';
+  f.ctx.ledger.pending[key] = { token: 'pending-corn', ruby: 0, module: 'farm', date: businessDate(f.args.now()) };
+  try {
+    await f.ctx.refreshStock();
+    await HANDLERS.farm(f.ctx, f.settings.modules.farm);
+    assert.equal(f.ctx.ledger.pending[key], undefined);
+    assert.equal(f.ctx.results.find(row => /该地块已种上 土豆/.test(String(row.reason ?? '')))?.status, 'skipped');
   } finally { f.ctx.dispose(); }
 });
 

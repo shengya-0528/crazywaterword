@@ -75,6 +75,12 @@ const MODULE_CACHE_CATEGORIES = {
   battle: ['heroes', 'world', 'inventory'], guild: ['guild', 'inventory'], activity: ['activities', 'inventory'], afk: ['tasks', 'inventory'],
 };
 const OUTAGE_ALERT_ATTEMPT = 3;
+// 这些拒绝是页面轮询与挂机互斥产生的正常状态，不算故障，不进运行日志。
+const expectedRejections = ['正在执行操作', '已手动断开', '账号已暂停'];
+const isExpectedRejection = error => {
+  const message = String(error?.message ?? '');
+  return expectedRejections.some(text => message.includes(text));
+};
 const TASK_FAILURE_ALERT_ROUNDS = 5;
 const INCOME_SAMPLE_MS = 10 * 60 * 1000;
 const VIP_FREE_AD_MIN_ROLE_LEVEL = 10;
@@ -618,6 +624,8 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
         fishingGoldReserve: saved?.fishingGoldReserve ?? defaultFishingGoldReserve,
         compassSpinCount: saved?.compassSpinCount ?? defaultCompassSpinCount,
         reconnect: normalizeReconnect(saved?.reconnect),
+        compassSpinCount: saved?.compassSpinCount ?? defaultCompassSpinCount,
+        reconnect: normalizeReconnect(saved?.reconnect),
         controller: null, job: null,
         stop: { aborted: false, manuallyStopped: false },
         history: [],
@@ -899,6 +907,8 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
       throw new Error('连接已取消');
     }
     session.player = response.playerInfo || null;
+    // 登录回包到达就代表连接可用，断线处理不必等 READY 事件。
+    client.ready = true;
     client.send('LoginFinishRequest', {});
     persistIdentity(account, session.player);
     const role = describeRole(session.player);
@@ -1018,6 +1028,22 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
   }
 
   /** Build the overview exclusively from the account cache so page polling never creates an implicit login. */
+  /**
+   * 总览刷新前向服务端确认当前战力，避免把登录快照里的旧数值一直显示下去。
+   *
+   * @param {object} session 当前账号的本地会话。
+   * @param {GameClient} instance 已连接的游戏客户端。
+   */
+  async function refreshPlayerPower(session, instance) {
+    if (!session.player?.playerId) return;
+    try {
+      const reply = await instance.request('OtherPlayerInfoRequest', { playerId: uidText(session.player.playerId) }, 'OtherPlayerInfoResponse', 8000);
+      if (session.client === instance && session.player && toNumber(reply.power) > 0) session.player.power = reply.power;
+    } catch (error) {
+      emit(session, 'warn', `总览：未能读取最新战力：${error.message}`, { diagnostic: 'OtherPlayerInfoRequest' });
+    }
+  }
+
   function buildOverviewFromCache(session, account) {
     const ok = Object.fromEntries(session.cache.queries);
     const failed = Object.fromEntries([...session.cache.categories]
@@ -1102,6 +1128,18 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
           finished: (building.factory.finished ?? []).map(product => ({ ...product, icon: itemIcon(product.id) })),
         })),
       },
+      // 总览按工厂分组展示成品库存；中文名与图标在服务端补齐，页面不接触协议字段。
+      factoryStock: (view.factoryStock ?? []).map((group) => ({
+        buildingId: group.buildingId,
+        type: group.type,
+        capacity: group.capacity,
+        products: group.products.map((product) => ({
+          itemId: product.itemId,
+          name: displayMaterial(config, product.itemId),
+          num: product.num,
+          icon: itemIcon(product.itemId),
+        })),
+      })),
       water: view.water,
       resFields: view.resFields,
       fleets: { count: view.fleets, list: view.fleetList },
@@ -1626,6 +1664,28 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
         json(choices ? { connected: true, ...choices } : { connected: false, rewards: [], materials: [] });
         return;
       }
+      if (route === 'GET /api/automation/guild-ship-options') {
+        const { session } = scoped_(parsed);
+        // 渲染表单不能唤醒离线账号；商船实时回包只复用已有连接读取。
+        if (!session.client?.connected) {
+          json({ connected: false, rewards: [], materials: [] });
+          return;
+        }
+        const client = session.client;
+        const choices = await enqueue(session, async () => {
+          // 此读取可能排在其他账号操作之后；等待期间重连会替换 client，旧连接结果不能写回。
+          if (session.client !== client || !client.connected) return null;
+          const state = await client.request('GuildShipRequest', {}, 'GuildShipResponse');
+          if (session.client !== client || !client.connected) return null;
+          const owned = new Set((state.ownRun ?? []).map(ship => ship.shipId));
+          // 只有已备货、未过期且未被当前账号领取的船可补给，因此仅用它们生成筛选候选。
+          const ships = (state.ship ?? []).filter(ship => ship.state === protocol.GuildShipState.GS_STATE_PREPARED
+            && Number(ship.preparedEndTime) > Date.now() / 1000 && !owned.has(ship.shipId));
+          return guildShipMaterialOptions(loadConfigSafe(), ships);
+        });
+        json(choices ? { connected: true, ...choices } : { connected: false, rewards: [], materials: [] });
+        return;
+      }
       if (route === 'POST /api/automation/settings') {
         const payload = jsonBody();
         needConfirm(payload);
@@ -1699,6 +1759,66 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
       if (route === 'GET /api/heroes') {
         const { account, session } = scoped_(parsed);
         json(await heroes(session, account));
+        return;
+      }
+      if (route === 'GET /api/pirates/board') {
+        const { account, session } = scoped_(parsed);
+        // 看板是只读聚合，走同一个串行任务槽避免与手动操作抢同一连接。
+        json(await progressionJob(session, account, route, null, client => pirateBoard(client, loadConfigSafe(), session.player)));
+        return;
+      }
+      if (route === 'GET /api/lineups') {
+        const { account, session } = scoped_(parsed);
+        json(await progressionJob(session, account, route, null, client => readLineups(client, loadConfigSafe(), session.player)));
+        return;
+      }
+      if (route === 'POST /api/lineups/apply') {
+        const { account, session } = scoped_(parsed);
+        const payload = jsonBody();
+        needConfirm(payload);
+        const key = JSON.stringify([route, payload.targetKey, payload.previewKey]);
+        json(await progressionJob(session, account, key, operationLabels[parsed.pathname], async (client, enabled) => {
+          const result = await applyLineup(client, loadConfigSafe(), session.player, { targetKey: payload.targetKey, previewKey: payload.previewKey, enabled });
+          emit(session, 'info', result.label);
+          return result;
+        }));
+        return;
+      }
+      if (route === 'POST /api/activities/run') {
+        const { account, session } = scoped_(parsed);
+        const payload = jsonBody();
+        needConfirm(payload);
+        if (payload.spinCount !== undefined && !validSpinCount(payload.spinCount)) throw new Error('抽奖券张数必须是 1 到 ' + maxCompassSpinCount + ' 的整数');
+        const key = JSON.stringify([route, payload.activityId, payload.taskKey]);
+        json(await progressionJob(session, account, key, operationLabels[parsed.pathname], (client, enabled) =>
+          runActivity(client, loadConfigSafe(), {
+            activityId: payload.activityId, taskKey: payload.taskKey, enabled, playerLevel: session.player?.level, player: session.player,
+            spinCount: payload.spinCount ?? session.loop.compassSpinCount,
+            report: entry => emit(session, entry.error ? 'error' : 'info',
+              [entry.label, entry.error || entry.reason].filter(Boolean).join(' · ')),
+          })));
+        return;
+      }
+      if (route === 'GET /api/income') {
+        json(incomeView(scoped_(parsed).session.id));
+        return;
+      }
+      if (route === 'GET /api/notify') {
+        json({ settings: loadNotifySettings(), events: notifyEvents, formats: webhookFormats });
+        return;
+      }
+      if (route === 'POST /api/notify/save') {
+        const settings = parseNotifySettings(jsonBody());
+        saveNotifySettings(settings);
+        emit(scoped, 'info', '通知设置已保存');
+        json({ settings });
+        return;
+      }
+      if (route === 'POST /api/notify/test') {
+        const result = await notifier.test();
+        if (result.failures.length) throw new Error(result.failures.join('；'));
+        emit(scoped, 'info', '测试通知已发送');
+        json(result);
         return;
       }
       if (route === 'GET /api/pirates') {
@@ -2448,6 +2568,29 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
         json({ fishingGoldReserve });
         return;
       }
+      if (route === 'POST /api/loop/reconnect') {
+        const { session } = scoped_(parsed);
+        const reconnect = parseReconnect(jsonBody());
+        saveAutomation(session.id, { reconnect });
+        session.loop.reconnect = reconnect;
+        // 关掉开关时顺手取消正在等待的那次重连，避免设置看起来生效了、后台还在重试。
+        if (!reconnect.enabled && cancelRecovery(session)) {
+          saveAutomation(session.id, { enabled: false });
+          emit(session, 'info', '已关闭自动重连，取消等待中的重连');
+        } else emit(session, 'info', '自动重连设置已保存');
+        json(loopView(session));
+        return;
+      }
+      if (route === 'POST /api/loop/compass-spin-count') {
+        const { session } = scoped_(parsed);
+        const { compassSpinCount } = jsonBody();
+        if (!validSpinCount(compassSpinCount)) throw new Error('抽奖券张数必须是 1 到 ' + maxCompassSpinCount + ' 的整数');
+        saveAutomation(session.id, { compassSpinCount });
+        session.loop.compassSpinCount = compassSpinCount;
+        emit(session, 'info', '风水罗盘每次最多使用 ' + compassSpinCount + ' 张抽奖券');
+        json({ compassSpinCount });
+        return;
+      }
       if (route === 'POST /api/loop/task') {
         const payload = jsonBody();
         needConfirm(payload);
@@ -2466,6 +2609,12 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
 
       json({ error: 'not found' }, 404);
     } catch (error) {
+      // 轮询撞上正在执行的操作、未连接或账号暂停都属于预期状态：只把原因回给调用方，
+      // 不写进运行日志，也不让前端补记一条，否则后台每轮都会刷出一片"失败"。
+      if (isExpectedRejection(error)) {
+        json({ error: error.message, quiet: true }, 400);
+        return;
+      }
       const entry = emit(scoped, 'error', (operationLabels[parsed.pathname] ?? '控制台操作') + '失败：' + error.message, { diagnostic: route });
       json({ error: error.message, log: entry }, 400);
     } finally {
@@ -2548,6 +2697,8 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
           onModuleComplete: async moduleId => refreshOverviewCategories(session, account, MODULE_CACHE_CATEGORIES[moduleId] ?? []),
           isEnabled: key => loop.tasks[key] === true,
           getFishingGoldReserve: () => loop.fishingGoldReserve,
+      getCompassSpinCount: () => loop.compassSpinCount,
+      isStageBusy: () => session.stages.view().running,
           getCompassSpinCount: () => loop.compassSpinCount,
           isStageBusy: () => session.stages.view().running,
           onRound(summary) {
@@ -2561,6 +2712,18 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
             loop.history.push(summary);
             if (loop.history.length > 50) loop.history.shift();
             emit(session, 'info', formatLoopRound(summary), summary.world.population ? { worldUpdated: true } : undefined);
+        // 收益日报按固定间隔采样，太密只会把同一份资源反复写进文件。
+        if (Date.now() - (session.incomeAt ?? 0) >= INCOME_SAMPLE_MS) {
+          session.incomeAt = Date.now();
+          void (async () => {
+            try {
+              const current = session.client;
+              if (!current?.connected) return;
+              const snapshot = await readIncomeSnapshot(current, session.player);
+              recordIncome(session.id, snapshot, { rounds: summary.round ? 1 : 0 });
+            } catch (error) { emit(session, 'warn', '记录收益日报失败：' + error.message); }
+          })();
+        }
           },
           onStep(entry) {
             const production = entry.ok && !entry.skipped && entry.step?.kind === 'startProduce';
@@ -2606,6 +2769,8 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
         key, label, group, enabled: loop.tasks[key], nextCheck: loop.tasks[key] ? rewards?.nextCheck(key) : null,
       })),
       fishingGoldReserve: loop.fishingGoldReserve,
+      compassSpinCount: loop.compassSpinCount,
+      reconnect: loop.reconnect,
       reconnect: loop.reconnect,
       recovery: session.recovery ? { kind: session.recovery.kind, attempts: session.recovery.attempts,
         nextAt: session.recovery.nextAt, reason: session.recovery.reason } : null,

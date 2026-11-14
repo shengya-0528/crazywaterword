@@ -6,6 +6,14 @@ import { scheduleProduction } from './production.mjs';
 import { serverTime, shanghaiWeekday } from './schedule.mjs';
 
 /**
+ * 未确认种植在空田上最多保留的轮数。
+ *
+ * FarmPlantRequest 没有响应，服务端状态同步又有延迟；连续这么多轮都看不到作物落地，
+ * 说明那次写入已经丢失，继续保留账本记录只会把这块田永久锁死。
+ */
+const FARM_PENDING_EMPTY_ROUNDS = 3;
+
+/**
  * 仅从当前连接的活动推送读取仍在进行中的英雄突袭订单，防止过期活动或上一连接的状态进入排产。
  *
  * @param {object} ctx 自动化上下文。
@@ -356,44 +364,94 @@ function pendingFarmPlantKeys(ctx, buildingId) {
 function reconcileFarmPlantPending(ctx, water) {
   const prefix = 'FarmPlantRequest:';
   const today = ctx.businessDate();
-  for (const key of Object.keys(ctx.ledger.pending).filter(entry => entry.startsWith(prefix))) {
+  // 空田计数按请求键跨轮保存：当天记录要等连续空田达到阈值才作废，仍在同步的种植不能被误判。
+  const emptyRounds = { ...(ctx.memory('farm.pending.emptyRounds') ?? {}) };
+  let changed = false;
+  /**
+   * 解除待确认记录：跨轮锁、空田计数和结果行一起收尾，避免残留再次挡住同一块田。
+   *
+   * @param {string} key 请求幂等键。
+   * @param {{buildingId: string, productId: string}} entry 解析出的地块与作物。
+   * @param {{ruby: number, date: string}} pending 账本中的待确认记录。
+   * @param {string} label 结果行标签。
+   * @param {string} status 结果行状态。
+   * @param {string} reason 记录给操作者看的原因。
+   * @returns {void} 记录已不存在时不做任何写入。
+   */
+  const release = (key, entry, pending, label, status, reason) => {
+    // 当天带押钻的记录既不能证明已执行也不能证明未扣款，留给跨日释放器统一处理。
+    if (pending.ruby !== 0 && pending.date === today) return;
+    if (!ctx.discardPending(key, { allowRuby: true })) return;
+    delete emptyRounds[key];
+    changed = true;
+    ctx.record({ request: 'FarmPlantRequest', label, status, reason });
+  };
+  for (const key of Object.keys(ctx.ledger.pending).filter(item => item.startsWith(prefix))) {
     const plant = pendingFarmPlant(key);
     if (!plant) continue;
     const pending = ctx.ledger.pending[key];
     const farm = water.building?.find(building => building.buildingId === plant.buildingId)?.farm;
     // 同一地块当前正种植同一作物，才足以证明之前的请求已经被服务端接受。
     if (farm?.productId === plant.productId) {
+      if (emptyRounds[key] !== undefined) { delete emptyRounds[key]; changed = true; }
       if (ctx.settlePending(key)) ctx.record({ request: 'FarmPlantRequest', label: `恢复未确认种植 ${plant.productId}`, status: 'success', verifiedByRead: true });
       continue;
     }
     // 看不到该农田时不猜测；当天记录仍按地块级重复提交保护保留。
-    if (!farm || pending.date === today) continue;
-    if (ctx.discardPending(key)) {
-      ctx.record({ request: 'FarmPlantRequest', label: `解除跨日未确认种植 ${plant.productId}`, status: 'skipped',
-        reason: `地块 ${plant.buildingId} 已不在种植该作物，旧记录不再阻止今天的种植` });
+    if (!farm) continue;
+    // 地块已经种上别的作物：旧记录不可能再生效，当天也必须立即解除，否则收割后这块田无法再次种植。
+    if (farm.productId) {
+      release(key, plant, pending, `农田 ${plant.buildingId}`, 'skipped', `该地块已种上 ${farm.productId}，旧的 ${plant.productId} 种植记录不再生效`);
+      continue;
     }
+    // 跨业务日的空田记录早已不可能还在途中，直接放掉。
+    if (pending.date !== today) {
+      release(key, plant, pending, `解除跨日未确认种植 ${plant.productId}`, 'skipped', `地块 ${plant.buildingId} 已不在种植该作物，旧记录不再阻止今天的种植`);
+      continue;
+    }
+    // 当天空田：连续空田达到阈值才放弃，给服务端状态同步留出窗口。
+    const rounds = (emptyRounds[key] ?? 0) + 1;
+    if (rounds < FARM_PENDING_EMPTY_ROUNDS) { emptyRounds[key] = rounds; changed = true; continue; }
+    release(key, plant, pending, `放弃未确认种植 ${plant.productId}`, 'failed', `连续 ${FARM_PENDING_EMPTY_ROUNDS} 轮未见 ${plant.productId} 落地，放弃未确认记录以重新种植`);
   }
+  if (changed) ctx.memory('farm.pending.emptyRounds', emptyRounds);
 }
 
 /**
- * 在有限窗口内轮询农田快照，等待静默种植请求写入服务端状态。
+ * 从 OnWater 快照或 SCUpdateWaterBuilding 推送里取出指定农田的种植状态。
  *
- * FarmPlantRequest 没有专用响应；首次 OnWater 读回可能早于异步落库，短暂轮询可以避免把已接受的请求误记为未确认。
+ * 服务端落库后先推 SCUpdateWaterBuilding，全量快照可能还停在旧状态，两条来源都要看。
+ *
+ * @param {object} value OnWater 快照或推送体。
+ * @param {string} [buildingId] 农田建筑 ID；省略时返回首块带 farm 的建筑。
+ * @returns {object|null} 该地块的 farm 状态。
+ */
+function farmStateOf(value, buildingId) {
+  const buildings = value?.building ?? [];
+  const target = buildingId === undefined ? buildings.find(building => building.farm) : buildings.find(building => building.buildingId === buildingId);
+  return target?.farm ?? null;
+}
+
+/**
+ * 在有限窗口内轮询农田状态，等待静默种植请求写入服务端状态。
+ *
+ * FarmPlantRequest 没有专用响应；服务端先推 SCUpdateWaterBuilding，OnWater 快照可能还停在旧状态，
+ * 只读快照会把已接受的请求误记为未确认，所以推送与快照都要看，并留出足够的同步窗口。
  *
  * @param {object} ctx 自动化上下文。
  * @param {string} buildingId 目标农田建筑 ID。
  * @param {string} productId 目标作物 ID。
  * @returns {Promise<boolean>} 当前农田明确显示目标作物时返回 true。
  */
-async function confirmFarmPlant(ctx, buildingId, productId) {
-  const attempts = 5;
+export async function confirmFarmPlant(ctx, buildingId, productId) {
+  const attempts = 8;
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) {
       // 静默写入后的状态同步有延迟；等待后重读，不重新发送写请求。
-      await new Promise(resolve => setTimeout(resolve, 250));
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
-    const farm = (await ctx.query('OnWaterRequest')).building?.find(building => building.buildingId === buildingId)?.farm;
-    if (farm?.productId === productId) return true;
+    if (farmStateOf(ctx.pushes?.get('SCUpdateWaterBuilding'), buildingId)?.productId === productId) return true;
+    if (farmStateOf(await ctx.query('OnWaterRequest'), buildingId)?.productId === productId) return true;
   }
   return false;
 }
@@ -430,7 +488,8 @@ export async function farm(ctx, options) {
       const pendingKeys = pendingFarmPlantKeys(ctx, plot.buildingId);
       if (pendingKeys.length) {
         // 账本曾以作物区分种植键；此处按地块汇总，避免改作物后对同一块空田再次发包。
-        ctx.record({ request: 'FarmPlantRequest', label: `农田 ${plot.buildingId}`, status: 'uncertain', reason: '该农田上次种植结果未确认，禁止重复提交' });
+        // 这不是失败：本轮只是等上一次写入的证据，连续空田超过阈值后 reconcile 会放掉记录。
+        ctx.record({ request: 'FarmPlantRequest', label: `农田 ${plot.buildingId}`, status: 'skipped', reason: `上一次种植仍在核对中（最多 ${FARM_PENDING_EMPTY_ROUNDS} 轮），本轮不重复提交` });
         continue;
       }
       if (!ctx.enough([crop.material])) {

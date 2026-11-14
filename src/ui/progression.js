@@ -53,7 +53,11 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && !$('tab-heroes').classList.contains('hidden')) void refreshProgression();
 });
 
-for (const id of ['trial', 'guild', 'equipment', 'crafting', 'lineup']) $(id + '-refresh').onclick = refreshProgression;
+// 刷新按钮按视图可选：页面没渲染对应按钮时跳过，不能让整段脚本在这里中断。
+for (const id of ['trial', 'guild', 'equipment', 'crafting', 'lineup']) {
+  const button = $(id + '-refresh');
+  if (button) button.onclick = refreshProgression;
+}
 
 function progressionAction(label, path, payload, account, reason, group) {
   const key = JSON.stringify(group ? [account, group] : [account, path, payload]);

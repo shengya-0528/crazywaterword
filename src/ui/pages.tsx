@@ -45,6 +45,8 @@ export function overviewPage() {
       </Panel>
       <Panel title="农作物库存（当前 / 上限）"><div className="icons" id="crops"><span className="dim">连接后显示</span></div>
       </Panel>
+      <Panel title="工厂成品库存（当前 / 上限）"><div id="factory-stock"><span className="dim">连接后显示</span></div>
+      </Panel>
       <Panel title="海商王"><div id="overview-trade"><span className="dim">活动开放后显示</span></div>
       </Panel>
       <Panel title="万吨货轮"><div id="overview-merchant-ship"><span className="dim">连接后显示</span></div>
@@ -153,6 +155,10 @@ export function heroesPage() {
     <Panel title="装备制造">
       <div className="bar"><Button id="crafting-refresh" variant="outline">刷新装备厂</Button></div>
       <div id="crafting-view" className="progression-view" aria-live="polite" />
+    </Panel>
+    <Panel title="推荐阵容">
+      <div className="bar"><Button id="lineup-refresh" variant="outline">刷新阵容</Button></div>
+      <div id="lineup-view" className="progression-view" aria-live="polite" />
     </Panel>
     </> },
     { id: "lineup", title: "阵容", content: <>
