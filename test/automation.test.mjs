@@ -6007,3 +6007,51 @@ test('service: expired discount purchase locks survive releaseExpiredLocks', () 
   assert.ok(f.ctx.ledger.pending['DiscountShopBuyRequest:2026-10-28:{"id":4}'], '折扣购买由专用结算器按已花费结算，不作废');
   assert.equal(f.ctx.ledger.pending['FarmPlantRequest:{"landIdx":1}'], undefined, '其他跨日零消耗记录照常解除');
 });
+
+/** 货轮开走后派遣键再也不会命中；当天就该放掉，不能挂到次日才被跨日释放清理。 */
+test('releaseOrphanLocks: 目标已消失的当天记录解除，仍在目标列表里的保留', async () => {
+  const { releaseOrphanLocks } = await import('../src/automation/common.mjs');
+  const f = fixture({});
+  const today = f.ctx.businessDate();
+  const key = uid => `TreasureLootSendFleetsRequest:${JSON.stringify({ uid, fleetBuildingIds: ['1远征船'] })}`;
+  f.ctx.ledger.pending[key('101')] = { token: 'ship-gone', ruby: 0, module: 'world', date: today };
+  f.ctx.ledger.pending[key('102')] = { token: 'ship-alive', ruby: 0, module: 'world', date: today };
+
+  const released = releaseOrphanLocks(f.ctx, { prefix: 'TreasureLootSendFleetsRequest:', target: body => body.uid, alive: ['102'] });
+  assert.equal(released, 1);
+  assert.equal(f.ctx.ledger.pending[key('101')], undefined, '目标消失的记录必须当轮解除');
+  assert.ok(f.ctx.ledger.pending[key('102')], '目标仍在时不能解除，否则会重复派遣');
+  const row = f.ctx.results.find(entry => entry.label === '解除目标已消失的未确认记录');
+  assert.equal(row?.status, 'skipped', '解除不等于成功，不能计入完成');
+  assert.match(row.reason, /101/);
+  assert.equal(row.ruby, undefined, '解除不能把押钻金额记成本次消费');
+});
+
+/** 押钻孤儿无法回读，释放预留时必须在日志里标明金额来源，且不能动跨日记录。 */
+test('releaseOrphanLocks: 押钻孤儿的预留一并释放，跨日记录留给跨日释放', async () => {
+  const { releaseOrphanLocks } = await import('../src/automation/common.mjs');
+  const f = fixture({});
+  const today = f.ctx.businessDate();
+  const yesterday = businessDate(fixedNow - 86400000);
+  const at = cityId => `MoveFleetsToCityRequest:${JSON.stringify({ buildingId: ['1远征船'], cityId })}`;
+  f.ctx.ledger.pending[at(82)] = { token: 'war-gone', ruby: 8, module: 'world', date: today };
+  f.ctx.ledger.pending[at(83)] = { token: 'war-old', ruby: 0, module: 'world', date: yesterday };
+
+  const released = releaseOrphanLocks(f.ctx, { prefix: 'MoveFleetsToCityRequest:', target: body => body.cityId, alive: [] });
+  assert.equal(released, 1, '只处理当天记录');
+  assert.equal(f.ctx.ledger.pending[at(82)], undefined, '带押钻的孤儿记录同样要释放，否则占着当日额度到次日');
+  assert.ok(f.ctx.ledger.pending[at(83)], '跨日遗留仍交给 releaseExpiredLocks');
+  assert.match(f.ctx.results.at(-1).reason, /8 钻/, '释放押钻必须写明金额来源，方便对游戏内流水');
+});
+
+/** 非默认键（如选择事件的 `请求名:uid`）没有请求体可解析，本函数不能猜目标。 */
+test('releaseOrphanLocks: 键不是 JSON 请求体时不动，交给模块专用核对', async () => {
+  const { releaseOrphanLocks } = await import('../src/automation/common.mjs');
+  const f = fixture({});
+  const today = f.ctx.businessDate();
+  f.ctx.ledger.pending['SelectChoiceRequest:1505339937126005'] = { token: 'choice', ruby: 0, module: 'world', date: today };
+
+  const released = releaseOrphanLocks(f.ctx, { prefix: 'SelectChoiceRequest:', alive: [] });
+  assert.equal(released, 0);
+  assert.ok(f.ctx.ledger.pending['SelectChoiceRequest:1505339937126005'], '无法解析目标时必须保留，避免绕过重复提交保护');
+});

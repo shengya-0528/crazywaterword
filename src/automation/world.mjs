@@ -1,5 +1,5 @@
 import { amount, idString } from './context.mjs';
-import { costs, idleFleets, inWindows, mutate, repeat, rewardAction, skip, succeeded } from './common.mjs';
+import { costs, idleFleets, inWindows, mutate, releaseOrphanLocks, repeat, rewardAction, skip, succeeded } from './common.mjs';
 import { claimPass } from './battle.mjs';
 import { pirateDailySweepLimit, pirateSweepProgress } from '../pirates.mjs';
 import { worldOnlineState } from '../extra-rewards.mjs';
@@ -313,6 +313,8 @@ async function merchantShip(ctx, options) {
     return;
   }
   const state = await ctx.query('TreasureLootListRequest');
+  // 货轮开走后旧派遣键永不再命中；当天就放掉，避免押钻预留一直占到次日。
+  releaseOrphanLocks(ctx, { prefix: 'TreasureLootSendFleetsRequest:', target: body => body.uid, alive: (state.treasure ?? []).map(ship => idString(ship.uid)) });
   const target = state.treasure?.find(ship => ship.color === TEN_THOUSAND_TON_SHIP_COLOR);
   if (!target) {
     skip(ctx, '当前未发现万吨货轮');
@@ -426,6 +428,8 @@ async function pirates(ctx, options) {
 async function radar(ctx, options) {
   let state = (await ctx.query('RadarInfoRequest')).radarInfo;
   if (!state) return skip(ctx, '雷达尚未开放');
+  // 事件结算或消失后旧派遣键不会再命中；固定事件 uid 为 '0'，必须留在有效集合里。
+  releaseOrphanLocks(ctx, { prefix: 'RadarSendFleetsRequest:', target: body => body.uid, alive: [...(state.events ?? []).map(event => idString(event.uid)), '0'] });
   const eventKind = e => ctx.rows('RadarRandEventCfg').find(r => r.eventId === e.eventId)?.type;
   if (options.claim) for (const event of state.events ?? []) if (event.state === ctx.protocol.RadarEventState.RADAR_EVENT_FINISHED && options.kinds.includes(eventKind(event))) await mutate(ctx, 'RadarGetRewardRequest', { uid: idString(event.uid) }, 'RadarInfoRequest', s => s.radarInfo?.events);
   state = (await ctx.query('RadarInfoRequest')).radarInfo;
@@ -717,6 +721,12 @@ async function cityWar(ctx, options) {
   // 先以服务端宣战状态二次确认，防止活动临时调整时在线奖请求被拒绝。
   const war = await ctx.query('WarDeclarationRequest');
   if (!(war.startTime <= ctx.now() / 1000 && war.endTime > ctx.now() / 1000)) return skip(ctx, '不在城战时段');
+  // 宣战城结束或改集结城市后旧派遣键不会再命中；保留仍在宣战列表里的城与当前集结、前往目标。
+  releaseOrphanLocks(ctx, {
+    prefix: 'MoveFleetsToCityRequest:',
+    target: body => body.cityId,
+    alive: [...(war.declarations ?? []).map(declaration => declaration.cityId), war.assembleCityId, ...options.fleets.map(rule => rule.gotoCityId)].filter(Boolean),
+  });
   // 日志和战报里城池用配置名（如 堡垒G2）展示，编号只留在数据层。
   const cityNames = cityNameMap(ctx.config, ctx.player?.scenarioId);
   const cityName = (cityId) => cityNames.get(Number(cityId)) ?? `城 #${cityId}`;

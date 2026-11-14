@@ -99,6 +99,47 @@ export async function mutate(ctx, request, body, stateRequest, select = value =>
   return ctx.action(request, body, { ...actionOptions, confirm, beforeState, replayConfirm: async stored => await readState() !== stored });
 }
 
+/**
+ * 解除「目标已消失」的当日未确认记录。
+ *
+ * 跨日释放只覆盖昨天的遗留；同一业务日内目标被移除（货轮开走、雷达事件结算、宣战城结束）时，
+ * 幂等键再也不会出现，记录会一直挂到次日才被清掉，期间押钻预留还占着当日额度。
+ * 只有调用方已经拿到最新的目标列表时才能调用：`alive` 必须来自本轮状态查询，不能靠推测。
+ *
+ * @param {object} ctx 自动化上下文。
+ * @param {object} options 释放条件。
+ * @param {string} options.prefix 键前缀，形如 `TreasureLootSendFleetsRequest:`，其后为 JSON 请求体。
+ * @param {(body: object) => unknown} [options.target] 从请求体取出目标标识；默认取 uid / id / cityId。
+ * @param {Iterable<string|number>} options.alive 当前仍有效的目标标识集合。
+ * @param {string} [options.label] 解除记录标题。
+ * @param {string} [options.note] 自定义原因；缺省按目标与押钻金额生成。
+ * @returns {number} 实际解除的条数。
+ */
+export function releaseOrphanLocks(ctx, { prefix, target = body => body.uid ?? body.id ?? body.cityId, alive, label = '解除目标已消失的未确认记录', note }) {
+  if (ctx.dryRun) return 0;
+  const today = ctx.businessDate();
+  const living = new Set([...(alive ?? [])].map(uid => idString(uid)));
+  let released = 0;
+  for (const key of Object.keys(ctx.ledger.pending)) {
+    const record = ctx.ledger.pending[key];
+    if (!record || record.date !== today || !key.startsWith(prefix)) continue;
+    let body;
+    // 键不是默认的 JSON 形态时不猜目标，交给模块自己的专用核对逻辑。
+    try { body = JSON.parse(key.slice(prefix.length)); } catch { continue; }
+    const uid = idString(target(body));
+    if (!uid || living.has(uid)) continue;
+    if (!ctx.discardPending(key, { allowRuby: true })) continue;
+    released += 1;
+    ctx.record({
+      request: prefix.slice(0, -1),
+      label,
+      status: 'skipped',
+      reason: note ?? `目标 ${uid} 已不在当前目标列表，旧记录不再阻止重新发起` + (record.ruby > 0 ? `；放弃预留的 ${record.ruby} 钻不计成功也不计消费，请以游戏内钻石流水为准` : ''),
+    });
+  }
+  return released;
+}
+
 /** 在明确的次数上限内刷新并处理，预览只产生第一步以免假定写操作已经生效。 */
 export async function repeat(ctx, limit, work) {
   for (let index = 0; index < limit; index++) {

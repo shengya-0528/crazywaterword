@@ -4,6 +4,7 @@
 
 ## 2026-11-15
 
+- 当天目标消失的未确认记录不再挂到次日：`releaseExpiredLocks` 原本只清理跨业务日的遗留，同一业务日内货轮开走、雷达事件结算、宣战城结束后，对应的幂等键再也不会命中，记录会一直留到第二天，期间押钻预留还占着当日额度。新增 `releaseOrphanLocks(ctx, { prefix, target, alive })`，由模块拿到最新状态后释放目标已不在列表里的当天记录；万吨货轮、雷达派遣、城战派遣三处已接入，解除时写明押钻金额并以游戏内流水为准，不计成功也不计消费。跨日记录仍由 `releaseExpiredLocks` 处理，键不是 JSON 请求体的记录（如选择事件）不在本函数处理范围。
 - 城战自动化补齐选城、汽油预算、攻城前维修与每日出征上限：新增 `targetMode`（宣战列表顺序 / 在场舰队最少）、`dailyDispatchLimit`、`petrol.reserve`、`petrol.dailyLimit`、`repair.enabled/belowPercent/maxCost`。选城改为按宣战列表遍历并逐个套用当日重复进攻去重、汽油预算与出征上限；汽油消耗按舰队到目标城的六边形距离查 `AttackCityConsumeCfg` 分档估算，配置或地图缺失时退回原顺序逻辑。维修门槛取「耐久上限 × 百分比」与「攻城战消耗耐久」的较大值，`maxCost` 上限按 `FleetRepairParamRequest` 单价判定，超限只跳过该舰队的进攻。以上选项默认关闭或为 0，旧设置文件重新加载时自动补默认值，行为与改动前一致。
 - 竞技场挑战补上与其他挑战共用的发送间隔：`ArenaChallengeRequest` 原先连续提交，现与主线、试炼共用 `CHALLENGE_COOLDOWN_MS`（1500ms）节流，避免频控拒绝导致整个战斗模块中断。
 - 配置包改为按修改时间选最新：`findConfigPack()` 不再无条件使用 `work/cdn/config_cn_pack.json`，改为在缓存候选里取 `mtimeMs` 最新者；`tools/sync-config.mjs` 复制后保留源时间戳，避免同步副本永久遮蔽游戏刚下载的新缓存。
