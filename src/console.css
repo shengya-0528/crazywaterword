@@ -179,11 +179,9 @@ section h2:first-child { border-top:0; margin-top:0; padding-top:0 }
 .overview-production { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:14px }
 .overview-table { min-width:0; overflow-x:auto }
 .overview-table h4 { margin:0; font-size:13px; color:var(--muted) }
-/* 总览中的农田与工厂是低优先级长列表：默认约两行，悬停/聚焦时平滑展开到约五行。 */
-.overview-production-scroll { max-height:7.4rem; overflow:auto; scrollbar-gutter:stable; transition:max-height 420ms ease; }
-.overview-production-scroll:hover, .overview-production-scroll:focus-within { max-height:15rem; }
+/* 农田与工厂列表整块展开：不再限制高度、不做内部滚动，条目多时由卡片自身撑高。 */
+.overview-production-scroll { overflow:visible; }
 .overview-production-scroll table { margin-top:0; }
-.overview-production-scroll thead { position:sticky; top:0; z-index:1; background:var(--color-card, #fff); }
 .overview-reward-list { display:flex; flex-wrap:wrap; gap:6px }
 .overview-reward-list .cell { min-width:0 }
 .overview-reward-item { display:flex; flex-direction:column; align-items:center; gap:1px }

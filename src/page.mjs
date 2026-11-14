@@ -795,38 +795,6 @@ function renderOverviewRows(id, rows) {
   box.appendChild(list);
 }
 
-/**
- * Keeps a collapsed production list moving slowly so rows remain discoverable without manual scrolling.
- * Hovering or focusing the list pauses the movement while CSS expands the viewport to five rows.
- */
-function bindOverviewProductionAutoScroll(scroll) {
-  // The real console runs in a browser; DOM-only test fixtures may omit animation APIs.
-  if (typeof window.requestAnimationFrame !== 'function') return;
-  let paused = false;
-  let lastStep = 0;
-
-  const pause = () => { paused = true; };
-  const resume = (event) => {
-    // Moving focus between table controls should not restart the scroll until focus leaves the whole list.
-    if (!event.relatedTarget || !scroll.contains(event.relatedTarget)) paused = false;
-  };
-  scroll.addEventListener('mouseenter', pause);
-  scroll.addEventListener('mouseleave', () => { paused = false; });
-  scroll.addEventListener('focusin', pause);
-  scroll.addEventListener('focusout', resume);
-
-  const tick = (time) => {
-    // Rendering a fresh overview detaches the old container; stop its loop on the next frame.
-    if (!scroll.isConnected) return;
-    if (!paused && time - lastStep >= 70 && scroll.scrollHeight > scroll.clientHeight + 1) {
-      const maxScroll = scroll.scrollHeight - scroll.clientHeight;
-      scroll.scrollTop = scroll.scrollTop >= maxScroll ? 0 : scroll.scrollTop + 1;
-      lastStep = time;
-    }
-    window.requestAnimationFrame(tick);
-  };
-  window.requestAnimationFrame(tick);
-}
 
 /** Builds an expandable, readable trade-radar list so city and goods IDs are not the only operator-facing data. */
 function tradeRadarDisclosure(radar) {
@@ -1001,7 +969,7 @@ function renderOverviewProduction(data) {
     // 作物只留图标，名字收进悬停提示，让面板默认保持紧凑。
     return [farm.buildingId, farm.productId ? { cells: [{ icon: farm.icon, tip: farm.name || farm.productId }] } : '未种植', status];
   }));
-  // 默认只展示两行，保留滚动容器让较长的农田列表仍可在卡片内浏览；悬停时由 CSS 展开完整内容。
+  // 列表整块展开，不在卡片内滚动：视野里直接看到全部农田，不用悬停或拖滚动条。
   const farmScroll = el('div', 'overview-production-scroll');
   farmScroll.appendChild(farmTable);
   farmPane.appendChild(farmScroll);
@@ -1019,14 +987,12 @@ function renderOverviewProduction(data) {
         : factory.finished?.length ? chip('paid', '待领取 ' + factory.finished.length + ' 项') : chip('paid', '空闲');
     return [factory.buildingId, products.length ? { cells: products } : '无排产', finish ? '生产中至 ' + finish : status];
   }));
-  // 工厂队列可能比农田更长；使用同样的容器规则，避免低优先级信息挤占总览首屏空间。
+  // 工厂队列可能比农田更长，同样整块展开；条目多时让卡片自身撑高，不留内部滚动区。
   const factoryScroll = el('div', 'overview-production-scroll');
   factoryScroll.appendChild(factoryTable);
   factoryPane.appendChild(factoryScroll);
   grid.appendChild(factoryPane);
   box.appendChild(grid);
-  bindOverviewProductionAutoScroll(farmScroll);
-  bindOverviewProductionAutoScroll(factoryScroll);
 }
 
 /** Renders basic account data together with cache-backed inventory, commerce and production panels. */
