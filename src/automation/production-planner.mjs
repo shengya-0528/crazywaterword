@@ -201,10 +201,12 @@ export function planProduction({ config, water, stock, needs, options, disabledB
     for (let pass = 0; pass < bufferIds.length; pass++) {
       let added = false;
       for (const id of bufferIds) {
+        if (restocking.includes(id)) continue;
         const tier = tierOf(id);
-        if (tier === 3 || restocking.includes(id)) continue;
-        const low = Math.min(stockCap, tier === 1 ? options.fastStockLow : options.shortStockLow);
-        const high = Math.min(stockCap, tier === 1 ? options.fastStockHigh : options.shortStockHigh);
+        // 第三档默认长线备货关闭（高水位 0 即整档跳过），只有显式配置水位才进入补货。
+        const low = Math.min(stockCap, tier === 1 ? options.fastStockLow : tier === 2 ? options.shortStockLow : options.longStockLow ?? 0);
+        const high = Math.min(stockCap, tier === 1 ? options.fastStockHigh : tier === 2 ? options.shortStockHigh : options.longStockHigh ?? 0);
+        if (!(high > 0)) continue;
         const lots = supply.get(id) ?? [];
         const free = lots.reduce((sum, lot) => sum + lot.num, 0);
         const onHand = lots.filter(lot => lot.kind === 'stock' || lot.kind === 'finished').reduce((sum, lot) => sum + lot.num, 0);

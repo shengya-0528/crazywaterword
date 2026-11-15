@@ -41,6 +41,8 @@ export function defaultSettings() {
         gain: true, autoProduce: false, products: {}, disabledFactories: [], priorityProduce: false, mondayGuildPriority: false, proposedPriority: ['resident', 'cargo', 'guild'], speedUpForDemand: false,
         // 分档只使用单件实际耗时；库存目标是订单/配方消耗之外的余量，不默认补满仓。
         fastTimeSecs: 300, shortTimeSecs: 600, fastStockLow: 5, fastStockHigh: 10, shortStockLow: 3, shortStockHigh: 5,
+        // 第三档（单件超过第二档）默认不备货，只按订单需求开工；显式配置水位后才长期备货。
+        longStockLow: 0, longStockHigh: 0,
         priorityBurstLimit: 3, reorderQueue: true,
       } },
       farm: { enabled: false, harvest: true, plant: false, cropPriorities: {}, cropKeepStock: {}, priorityPlant: false, seedOnDemand: false, speedUp: false, speedUpMaxActions: 8 },
@@ -227,7 +229,7 @@ export function validateSettings(value, { pirateDailyLimit = null } = {}) {
   const factory = result.modules.island.factory;
   // 两个时间分档和补货水位必须有序，防止表单配置使补货永不停止或档位倒置。
   if (factory.fastTimeSecs > factory.shortTimeSecs) throw new Error('第一档耗时不能超过第二档耗时');
-  if (factory.fastStockLow > factory.fastStockHigh || factory.shortStockLow > factory.shortStockHigh) throw new Error('工厂补货低水位不能超过高水位');
+  if (factory.fastStockLow > factory.fastStockHigh || factory.shortStockLow > factory.shortStockHigh || factory.longStockLow > factory.longStockHigh) throw new Error('工厂补货低水位不能超过高水位');
   if (factory.priorityBurstLimit < 1) throw new Error('连续优先生产上限必须至少为 1');
   return result;
 }

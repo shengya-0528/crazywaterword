@@ -27,7 +27,7 @@ function recipe(itemId, produceTime, costItem = [['木材', 1]], buildType = '�
 
 /** 禁用常备库存时，仅比较订单及原料依赖，不混入额外补货任务。 */
 function demandOnly() {
-  return { fastStockLow: 0, fastStockHigh: 0, shortStockLow: 0, shortStockHigh: 0 };
+  return { fastStockLow: 0, fastStockHigh: 0, shortStockLow: 0, shortStockHigh: 0, longStockLow: 0, longStockHigh: 0 };
 }
 
 test('production time: fixed reduction precedes speed division, and missing times are not instant', () => {
@@ -203,7 +203,7 @@ test('queue policy: reordering can be disabled without disabling replenishment i
 });
 
 test('factory settings: reject inverted tiers, inverted watermarks, and disabled fairness', () => {
-  for (const changes of [{ fastTimeSecs: 601 }, { fastStockLow: 11 }, { shortStockLow: 6 }, { priorityBurstLimit: 0 }]) {
+  for (const changes of [{ fastTimeSecs: 601 }, { fastStockLow: 11 }, { shortStockLow: 6 }, { longStockLow: 5, longStockHigh: 1 }, { priorityBurstLimit: 0 }]) {
     const settings = defaultSettings(); Object.assign(settings.modules.island.factory, changes);
     assert.throws(() => validateSettings(settings));
   }
@@ -211,6 +211,15 @@ test('factory settings: reject inverted tiers, inverted watermarks, and disabled
   assert.equal(validateSettings(settings).modules.island.factory.fastTimeSecs, 0);
 });
 
+
+test('long stock: the third tier buffers only after its own watermark is configured', () => {
+  // 空厂长期空转的根因是第三档默认不备货：只看订单需求，没有订单就不开工。
+  const off = planProduction(scenario({ stock: [['木材', 50]] }));
+  assert.equal(off.tasks.filter(task => task.productId === '长货').length, 0);
+  const on = planProduction(scenario({ stock: [['木材', 50]], options: { longStockLow: 1, longStockHigh: 3 } }));
+  assert.equal(on.tasks.filter(task => task.productId === '长货').length, 3);
+  assert.ok(on.restocking.includes('长货'));
+});
 
 test('lower tier first: within one tier the base ingredient starts before the product that needs it', () => {
   // 两件都在快档时，成品先开工只会占住制造位等原料；同档内必须让基础料先上，成品随后立刻可接。

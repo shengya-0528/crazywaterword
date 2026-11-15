@@ -61,7 +61,7 @@ const numericArrays = new Set(['positions','makeIds','maps','hours','attackTypes
 const objectArrays = new Set(['fleets','matchWindows']);
 const dictionarySettings = new Set(['products','cropPriorities','cropKeepStock']);
 Object.assign(automationLabels,{breedMinQuality:'培育最高品质',watchVideo:'领取招募广告收益',giveUpPve:'放弃当前 PVE 对局',cancelMatchmaking:'取消当前匹配队列',helpAlly:'允许帮助己方联盟',pvpTrustee:'真人对局使用托管',helpMinStock:'帮助前最低库存门槛',attackTimes:'每日挑战次数上限'});
-Object.assign(automationLabels,{fastTimeSecs:'第一档耗时上限（秒）',shortTimeSecs:'第二档耗时上限（秒）',fastStockLow:'第一档补货低水位',fastStockHigh:'第一档补货高水位',shortStockLow:'第二档补货低水位',shortStockHigh:'第二档补货高水位',priorityBurstLimit:'连续短料优先件数上限',reorderQueue:'允许重排未开工队列'});
+Object.assign(automationLabels,{fastTimeSecs:'第一档耗时上限（秒）',shortTimeSecs:'第二档耗时上限（秒）',fastStockLow:'第一档补货低水位',fastStockHigh:'第一档补货高水位',shortStockLow:'第二档补货低水位',shortStockHigh:'第二档补货高水位',longStockLow:'第三档补货低水位',longStockHigh:'第三档补货高水位',priorityBurstLimit:'连续短料优先件数上限',reorderQueue:'允许重排未开工队列'});
 
 // 文案按完整设置路径区分同名字段，避免把“余额保留量”误读成“每日额度”。
 const automationSettingCopy = {
@@ -182,6 +182,8 @@ const automationFieldActionCopy = {
   fastStockHigh:'第一档触发补货后补到此可用库存目标，不默认补满仓；实际目标不超过游戏单品库存上限',
   shortStockLow:'第二档扣除订单及配方占用后的可用库存低于此值时触发补货，在产和未领取成品也会抵扣缺口',
   shortStockHigh:'第二档触发补货后补到此可用库存目标；低于高水位但未触发低水位时不新开补货',
+  longStockLow:'第三档（单件耗时超过第二档）的补货低水位，默认 0 表示不备货、只在订单需求时开工；调高后长线商品也会按水位提前生产',
+  longStockHigh:'第三档触发补货后补到此可用库存目标；两档都为 0 时第三档完全不参与补货',
   priorityBurstLimit:'先恢复能生产短料的低水位，再按此件数为材料齐全的长订单保底；恢复低水位的紧急补货不计数，保底位置保护到开工',
   reorderQueue:'短料可取消并重排未开工的等待项；所有已开工项（包括月卡第二生产位）保持不动，取消后按实际返还库存重算',
   harvest:'收割已成熟农作物；未成熟或空闲农田不会处理',
