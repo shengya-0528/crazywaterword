@@ -212,6 +212,18 @@ test('factory settings: reject inverted tiers, inverted watermarks, and disabled
 });
 
 
+test('lower tier first: within one tier the base ingredient starts before the product that needs it', () => {
+  // 两件都在快档时，成品先开工只会占住制造位等原料；同档内必须让基础料先上，成品随后立刻可接。
+  const input = scenario({ recipes: [recipe('成品料', 120, [['基础料', 1]]), recipe('基础料', 90)], stock: [['木材', 10]],
+    needs: [{ id: '成品料', need: 1, source: 'resident' }, { id: '基础料', need: 1, source: 'resident' }], options: demandOnly() });
+  const plan = planProduction(input);
+  assert.equal(plan.choices[0].task.productId, '基础料');
+  assert.ok(plan.tasks.find(task => task.productId === '成品料').inputs.some(input => input.id === '基础料'));
+  // 门禁补货顺序同样先底层：基础料进入常备任务后不再被成品挤到后面。
+  const refill = scenario({ recipes: [recipe('成品料', 120, [['基础料', 1]]), recipe('基础料', 90)], stock: [['木材', 10]] });
+  assert.deepEqual(planProduction(refill).tasks.map(task => task.productId).slice(0, 1), ['基础料']);
+});
+
 test('Monday guild: shared ingredients and dependencies precede other orders and buffers', () => {
   const input = scenario({ recipes: [recipe('快料', 60), recipe('募兵货', 7200, [['中料', 1]]), recipe('中料', 500)],
     stock: [['木材', 1]], needs: [{ id: '快料', need: 1, source: 'resident' }, { id: '募兵货', need: 1, source: 'guild' }] });

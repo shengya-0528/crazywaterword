@@ -330,6 +330,11 @@ test('console: disconnect survives polling and queued business requests until ex
 
   assert.equal((await api('/api/connect', {})).status, 200);
   assert.equal((await api('/api/overview')).value.status.connected, true);
+  // 总览要单独上报脚本侧托管状态，页面才能把「脚本代管」和游戏内特权分开显示。
+  const linkedOverview = (await api('/api/overview')).value;
+  assert.deepEqual(Object.keys(linkedOverview.scriptHosting).sort(), ['factory', 'farm']);
+  assert.deepEqual(Object.keys(linkedOverview.scriptHosting.factory).sort(), ['auto', 'enabled', 'priority']);
+  assert.deepEqual(Object.keys(linkedOverview.scriptHosting.farm).sort(), ['enabled', 'plant']);
   const session = app.sessions.get('connection-a');
   const oldClient = session.client;
   assert.equal((await api('/api/disconnect', {})).status, 200);

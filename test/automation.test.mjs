@@ -856,6 +856,12 @@ test('overview: production panel exposes every farm crop and factory queue item'
   assert.match(PAGE, /id="overview-production"/);
   assert.match(PAGE, /function renderOverviewProduction\(data\)/);
   assert.match(PAGE, /农田与工厂生产/);
+  // 总览要能分清「脚本代管」和「游戏内特权」，两者不能写成一个「自动生产」。
+  assert.match(PAGE, /overview-hosting/);
+  assert.match(PAGE, /scriptHosting/);
+  assert.match(PAGE, /脚本代管排产/);
+  assert.match(PAGE, /脚本代管种植/);
+  assert.match(PAGE, /游戏续产/);
 });
 
 /** 桌面总览将中间业务卡置于瀑布流，避免高度较高的状态区拉伸主力英雄卡。 */

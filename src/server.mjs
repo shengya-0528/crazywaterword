@@ -1084,7 +1084,10 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
       reward: (view.merchantShip?.reward ?? []).map(asset => ({ ...asset, name: displayMaterial(config, asset.id), icon: materialIcon(asset.id) })),
     };
     const daily = view.daily;
-    const cropKeepStock = loadSettings(account.id).modules?.farm?.cropKeepStock ?? {};
+    const settings = loadSettings(account.id);
+    const islandSettings = settings.modules?.island ?? {};
+    const farmSettings = settings.modules?.farm ?? {};
+    const cropKeepStock = farmSettings.cropKeepStock ?? {};
     return {
       account: describeAccount(account, { active: account.id === loadStore().activeId }),
       status: accountStatus(session),
@@ -1127,6 +1130,19 @@ export function createConsole({ host = '127.0.0.1', port = 17321 }) {
           queue: (building.factory.queue ?? []).map(job => ({ ...job, name: displayMaterial(config, job.productId), icon: itemIcon(job.productId) })),
           finished: (building.factory.finished ?? []).map(product => ({ ...product, icon: itemIcon(product.id) })),
         })),
+      },
+      // 脚本自己的托管状态：跟下面的 water.autoProduce* / water.autoFarming（游戏内特权）分开上报，
+      // 页面才能把「游戏续产」和「脚本代管」分开写，不再混成一个「自动生产」。
+      scriptHosting: {
+        factory: {
+          enabled: islandSettings.enabled === true,
+          auto: islandSettings.enabled === true && islandSettings.factory?.autoProduce === true,
+          priority: islandSettings.enabled === true && islandSettings.factory?.priorityProduce === true,
+        },
+        farm: {
+          enabled: farmSettings.enabled === true,
+          plant: farmSettings.enabled === true && farmSettings.plant === true,
+        },
       },
       // 总览按工厂分组展示成品库存；中文名与图标在服务端补齐，页面不接触协议字段。
       factoryStock: (view.factoryStock ?? []).map((group) => ({

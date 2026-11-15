@@ -71,6 +71,27 @@ export function planProduction({ config, water, stock, needs, options, disabledB
     if (seconds <= options.shortTimeSecs) return 2;
     return 3;
   }
+  // 配方依赖图：谁把某个产品当作原料。层级从成品往回数，成品是 0 层，越靠近基础原料层数越大。
+  // 低级产品是高级产品的原料且单件耗时短，先排产才能让上层成品不空等材料，所以层数大的先开工。
+  const consumers = new Map();
+  for (const row of recipes.values()) for (const [id] of row.costItem ?? []) {
+    if (!consumers.has(id)) consumers.set(id, []);
+    consumers.get(id).push(row.itemId);
+  }
+  const depths = new Map();
+  /** 依赖层级：越大越基础；参与成品的配方循环按成品处理，不参与排序时再优先。 */
+  function depthOf(id, path = []) {
+    if (depths.has(id)) return depths.get(id);
+    const upper = consumers.get(id);
+    if (!upper?.length || path.includes(id)) {
+      depths.set(id, 0);
+      return 0;
+    }
+    let value = 0;
+    for (const parent of upper) value = Math.max(value, 1 + depthOf(parent, [...path, id]));
+    depths.set(id, value);
+    return value;
+  }
   const supply = new Map(), totals = new Map(stock), waiting = [], active = [];
   const allocations = [], tasks = [], restocking = [], factoryTimes = new Map(), urgentProducts = new Set();
   const plannedCounts = new Map();
@@ -174,7 +195,7 @@ export function planProduction({ config, water, stock, needs, options, disabledB
   for (const need of priorityNeeds) allocate(need.id, need.need, `demand:${need.source}:${need.id}`);
   const missingNeeds = needs.filter(need => !priorityNeeds.includes(need)).map(need => ({ ...need, ...takeSupply(need.id, need.need, `demand:${need.source}:${need.id}`) }));
   for (const need of missingNeeds) planMissing(need.id, need.missing, `demand:${need.source}:${need.id}`);
-  const bufferIds = [...recipes.keys()].sort((a, b) => tierOf(a) - tierOf(b));
+  const bufferIds = [...recipes.keys()].sort((a, b) => tierOf(a) - tierOf(b) || depthOf(b) - depthOf(a));
   /** 后面的补货配方也会消耗前面的短料，迭代到不再触发新水位，防止先开中长品才发现短料断供。 */
   function planBuffers() {
     for (let pass = 0; pass < bufferIds.length; pass++) {
@@ -261,7 +282,8 @@ export function planProduction({ config, water, stock, needs, options, disabledB
       if (building.factory.autoProductId) return false;
       if (hasProtectedWaiting(building.buildingId)) return false;
       const first = waiting.find(job => job.buildingId === building.buildingId);
-      return options.reorderQueue && first && task.tier < first.tier;
+      // 更底层的原料即使档位相同也要能提到队首，否则成品先占位会让原料排队等成品。
+      return options.reorderQueue && first && (task.tier < first.tier || (task.tier === first.tier && depthOf(task.productId) > depthOf(first.productId)));
     });
   }
   // 低水位是安全库存，不属于可让步的高水位补货。只有原料齐全且能排入的紧急短料才阻止长单保底。
@@ -275,7 +297,7 @@ export function planProduction({ config, water, stock, needs, options, disabledB
       && (!task.deferred || task.deferred.buildingId === building.buildingId)) urgentBuildings.add(building.buildingId);
   }
   const readyOrder = [...tasks].sort((a, b) => Number(b.guildPriority) - Number(a.guildPriority) || Number(factories.some(building => isLongDue(b, building))) - Number(factories.some(building => isLongDue(a, building)))
-    || a.tier - b.tier || Number(b.demand) - Number(a.demand) || a.order - b.order);
+    || a.tier - b.tier || depthOf(b.productId) - depthOf(a.productId) || Number(b.demand) - Number(a.demand) || a.order - b.order);
   for (const task of readyOrder) {
     const required = new Map();
     for (const [id, num] of task.recipe.costItem) required.set(id, (required.get(id) ?? 0) + num);
@@ -298,9 +320,9 @@ export function planProduction({ config, water, stock, needs, options, disabledB
     const streak = state.streaks?.[building.buildingId] ?? 0;
     const protectedWaiting = hasProtectedWaiting(building.buildingId);
     const longDue = !protectedWaiting && !urgentBuildings.has(building.buildingId) && streak >= options.priorityBurstLimit && candidates.some(task => task.demand && task.tier === 3);
-    // 每连续安排若干短料，就给已具备材料的长订单一个开工机会；其余按档位和需求顺序。
+    // 每连续安排若干短料，就给已具备材料的长订单一个开工机会；其余按基础层、档位和需求顺序。
     candidates.sort((a, b) => Number(Boolean(b.guildPriority)) - Number(Boolean(a.guildPriority)) || (longDue ? Number(b.demand && b.tier === 3) - Number(a.demand && a.tier === 3) || Number(Boolean(b.queued)) - Number(Boolean(a.queued)) : 0)
-      || a.tier - b.tier || Number(b.demand) - Number(a.demand) || a.order - b.order);
+      || a.tier - b.tier || depthOf(b.productId) - depthOf(a.productId) || Number(b.demand) - Number(a.demand) || a.order - b.order);
     let best = candidates[0];
     if (!best) continue;
     const buildingWaiting = waiting.filter(job => job.buildingId === building.buildingId);
@@ -312,7 +334,8 @@ export function planProduction({ config, water, stock, needs, options, disabledB
     if (!longDue && !protectedWaiting && !building.factory.autoProductId && options.reorderQueue) {
       // 头部已有短料不代表后面排好了：在整个等待后缀找倒置，只取消挡路后缀，不动正确前缀。
       const promotion = candidates.find(candidate => {
-        const displaced = buildingWaiting.filter(job => candidate.tier < job.tier && (!candidate.queued || job.position < candidate.position));
+        const displaced = buildingWaiting.filter(job => (candidate.tier < job.tier || (candidate.tier === job.tier && depthOf(candidate.productId) > depthOf(job.productId)))
+          && (!candidate.queued || job.position < candidate.position));
         return displaced.reduce((sum, job) => sum + job.seconds, 0) >= 30;
       });
       if (promotion) {
@@ -329,7 +352,7 @@ export function planProduction({ config, water, stock, needs, options, disabledB
     best = candidates.find(task => !task.queued);
     if (best && queue.length < slots) choices.push({ kind: 'start', building, task: best, longDue: longDue && best.demand && best.tier === 3 });
   }
-  // 可执行的长订单保底先获得原料和生产位，其余优先安排短料；每一步写后都会重新规划。
-  choices.sort((a, b) => Number(Boolean(b.task.guildPriority)) - Number(Boolean(a.task.guildPriority)) || Number(b.longDue) - Number(a.longDue) || a.task.tier - b.task.tier || Number(b.task.demand) - Number(a.task.demand) || a.task.order - b.task.order);
+  // 可执行的长订单保底先获得原料和生产位，其余优先安排底层原料再排成品；每一步写后都会重新规划。
+  choices.sort((a, b) => Number(Boolean(b.task.guildPriority)) - Number(Boolean(a.task.guildPriority)) || Number(b.longDue) - Number(a.longDue) || a.task.tier - b.task.tier || depthOf(b.task.productId) - depthOf(a.task.productId) || Number(b.task.demand) - Number(a.task.demand) || a.task.order - b.task.order);
   return { choices, restocking, allocations, tasks, active, waiting, factories, urgentBuildings: [...urgentBuildings], warnings: [...new Set(warnings)] };
 }

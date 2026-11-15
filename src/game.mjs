@@ -560,7 +560,8 @@ export function formatState(view) {
   }
   const pirateSweep = view.pirates?.sweep;
   lines.push(`世界: 资源田 ${view.resFields?.count ?? 0}/${view.resFields?.max ?? 0} 舰队 ${view.fleets} 货船 ${view.cargo} 海盗 ${view.pirates?.count ?? 0}(${pirateSweep ? `扫荡已用${pirateSweep.used}/${pirateSweep.dailyLimit}，剩余${pirateSweep.remaining}` : '扫荡次数未返回'})`);
-  lines.push(`  自动生产至 ${clock(view.water.autoProduceEndTime)} 永久=${view.water.autoProduceForever} 自动种植=${view.water.autoFarming}`);
+  // 游戏内特权为一行，脚本代管在控制台按 settings 显示；CLI 这行只报游戏侧字段，别让人误读成脚本排产。
+  lines.push(`  游戏内续产至 ${clock(view.water.autoProduceEndTime)} 永久=${view.water.autoProduceForever} 游戏内自动种植=${view.water.autoFarming}`);
   lines.push(`  钓鱼lv${view.water.fishingLevel ?? '-'} 打捞lv${view.water.salvageLevel ?? '-'} 潜水lv${view.water.divingLevel ?? '-'}`);
   if (view.worldBoss) lines.push(`  世界Boss bossId=${view.worldBoss.bossId} 最高伤害=${view.worldBoss.bestDamage} 已领档位=${view.worldBoss.gotRewardLevel}`);
   lines.push(`公会候选: ${JSON.stringify(view.guild.map((entry) => entry.id))}`);

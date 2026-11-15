@@ -951,12 +951,29 @@ function renderOverviewCityWar(stats) {
 function renderOverviewProduction(data) {
   const box = clear($('overview-production'));
   const production = data.production || {};
+  const hosting = data.scriptHosting || {};
   const farms = production.farms || [];
   const factories = production.factories || [];
   if (!farms.length && !factories.length) {
     box.appendChild(el('span', 'dim', '暂无农田或工厂数据'));
     return;
   }
+  // 先说明「谁在管」，下面的表才是「管到了什么」。脚本托管和游戏内特权是两件事，分开写。
+  const factoryHosting = hosting.factory || {};
+  const farmHosting = hosting.farm || {};
+  const hostingLine = el('div', 'overview-hosting');
+  const factoryText = !factoryHosting.enabled ? '生产：脚本未托管'
+    : !factoryHosting.priority && !factoryHosting.auto ? '生产：脚本排产未开，工厂空转'
+      : factoryHosting.priority ? '生产：脚本代管排产（需求优先）'
+        : '生产：脚本代管排产 + 游戏内续产';
+  // 开了海岛模块但两种排产都关时不会下任何单，这条必须显红：看起来在线，实际不排产。
+  const factoryTone = !factoryHosting.enabled || (!factoryHosting.priority && !factoryHosting.auto) ? 'error' : 'ready';
+  hostingLine.appendChild(chip(factoryTone, factoryText));
+  hostingLine.appendChild(chip(farmHosting.enabled && farmHosting.plant ? 'ready' : 'paid',
+    !farmHosting.enabled ? '种植：脚本未托管' : farmHosting.plant ? '种植：脚本代管种植' : '种植：脚本只收割，不补种'));
+  // 游戏内自动种植会和脚本抢同一块田，脚本每轮都会把它关掉；这里说清楚，免得看到「已开」以为在生效。
+  if (data.water?.autoFarming) hostingLine.appendChild(chip('warn', '游戏内自动种植开着，脚本每轮会关掉'));
+  box.appendChild(hostingLine);
   const grid = el('div', 'overview-production');
   const farmPane = el('div', 'overview-table');
   farmPane.appendChild(el('h4', null, '农田（' + farms.length + ' 块）'));
@@ -980,10 +997,10 @@ function renderOverviewProduction(data) {
     const queue = factory.queue || [];
     // 队列每项只留图标、名字收进悬停提示，避免长队列把面板撑成竖条。
     const products = queue.length ? queue.map((job) => ({ icon: job.icon, tip: job.name || job.productId || '' }))
-      : factory.autoProductId ? [{ icon: factory.autoIcon, tip: '自动：' + (factory.autoName || factory.autoProductId) }] : [];
+      : factory.autoProductId ? [{ icon: factory.autoIcon, tip: '游戏续产：' + (factory.autoName || factory.autoProductId) }] : [];
     const finish = queue.filter((job) => job.finishTime).map((job) => when(job.finishTime * 1000)).join('、');
     const status = queue.length ? chip('ready', '生产中 ' + queue.length + ' 项')
-      : factory.autoProductId ? chip('ready', '自动生产')
+      : factory.autoProductId ? chip('ready', '游戏续产')
         : factory.finished?.length ? chip('paid', '待领取 ' + factory.finished.length + ' 项') : chip('paid', '空闲');
     return [factory.buildingId, products.length ? { cells: products } : '无排产', finish ? '生产中至 ' + finish : status];
   }));

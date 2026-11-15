@@ -493,27 +493,40 @@ export async function farm(ctx, options) {
         continue;
       }
       if (!ctx.enough([crop.material])) {
+        const seedName = crop.material?.[0] ?? '种子';
+        // 跳过原因要能直接指向动作：种子厂等级不够只能先去升级，原料缺口只能先攒，已经排产的就等收货。
+        let seedReason = `${crop.id} 缺少${seedName}`;
         if (options.seedOnDemand) {
-          const recipe = ctx.rows('BuildingProduceCfg').find(r => r.itemId === crop.material[0]);
+          const recipe = ctx.rows('BuildingProduceCfg').find(r => r.itemId === seedName);
           const resolver = makeTypeResolver(ctx.config);
           const disabled = ctx.settings.modules.island.factory.disabledFactories;
           const current = await ctx.query('OnWaterRequest');
           const cap = ctx.rows('BuildingProduceParamCfg').find(r => r.paramName === '制造位上限')?.paramValue;
+          const seedBuildings = current.building?.filter(b => resolver(b.buildingId) === recipe?.buildType) ?? [];
           const factory = recipe && cap > 0 && !disabled.includes(recipe.buildType) && !ctx.settings.modules.island.disabledBuildings.includes(recipe.buildType)
-            && current.building?.find(b => resolver(b.buildingId) === recipe.buildType && b.level >= recipe.unlockLevel && b.factory && (b.factory.factoryQ?.length ?? 0) < cap);
+            && seedBuildings.find(b => b.level >= recipe.unlockLevel && b.factory && (b.factory.factoryQ?.length ?? 0) < cap);
           const need = Math.max(shortages.find(n => n.id === crop.id)?.lack ?? 0, (options.cropKeepStock[crop.id] ?? 0) - (ctx.stock.get(crop.id) ?? 0)) - (inField.get(crop.id) ?? 0);
           // 空田同样可能缺少 farm 字段，必须按建筑类型统计，否则种子补充计划会误判为空田数。
           const emptyPlots = current.building?.filter(b => isFarmBuilding(b) && !b.farm?.productId).length ?? 0;
           const seedTarget = crop.produceNum > 0 ? Math.min(emptyPlots, Math.ceil(Math.max(0, need) / crop.produceNum)) * crop.material[1] : 0;
           // 缺种子时只补足计划种植所需数量，现有队列和成品也要抵扣，不能每块空田重复排同一缺口。
-          const pendingSeeds = (current.building ?? []).reduce((sum, b) => sum + (b.factory?.factoryQ?.filter(q => q.productId === crop.material[0]).length ?? 0)
-            + costs(b.factory?.finishedProducts, ctx.protocol).filter(([id]) => id === crop.material[0]).reduce((n, [, count]) => n + count, 0), 0);
-          if (factory && (ctx.stock.get(crop.material[0]) ?? 0) + pendingSeeds < seedTarget && ctx.enough(recipe.costItem)) {
+          const pendingSeeds = (current.building ?? []).reduce((sum, b) => sum + (b.factory?.factoryQ?.filter(q => q.productId === seedName).length ?? 0)
+            + costs(b.factory?.finishedProducts, ctx.protocol).filter(([id]) => id === seedName).reduce((n, [, count]) => n + count, 0), 0);
+          if (factory && (ctx.stock.get(seedName) ?? 0) + pendingSeeds < seedTarget && ctx.enough(recipe.costItem)) {
             const result = await mutate(ctx, 'StartFactoryProduceRequest', { buildingId: factory.buildingId, productId: recipe.itemId }, 'OnWaterRequest', s => s.building?.find(b => b.buildingId === factory.buildingId)?.factory, { expenses: recipe.costItem });
             if (ctx.dryRun && succeeded(result)) return skip(ctx, '缺种子，先完成生产后重新规划种植');
+            seedReason = `${crop.id} 缺少${seedName}：已排产，等种子收货后自动补种`;
+          } else if (recipe && !factory && !seedBuildings.some(b => b.level >= recipe.unlockLevel)) {
+            seedReason = `${crop.id} 缺少${seedName}：${recipe.buildType}等级不足（需 Lv${recipe.unlockLevel}，现有 Lv${Math.max(0, ...seedBuildings.map(b => b.level ?? 0))}）`;
+          } else if (recipe && !ctx.enough(recipe.costItem)) {
+            seedReason = `${crop.id} 缺少${seedName}：生产种子所需原料不足`;
+          } else if (factory && (ctx.stock.get(seedName) ?? 0) + pendingSeeds >= seedTarget) {
+            seedReason = `${crop.id} 缺少${seedName}：种子已排产，等收货`;
+          } else if (recipe && seedBuildings.some(b => b.level >= recipe.unlockLevel)) {
+            seedReason = `${crop.id} 缺少${seedName}：种子厂制造位已满，等现有队列完成后自动补种`;
           }
         }
-        skip(ctx, `${crop.id} 缺少种子`); continue;
+        skip(ctx, seedReason); continue;
       }
       const result = await mutate(ctx, 'FarmPlantRequest', { args: [{ buildingId: plot.buildingId, productId: crop.id }] }, 'OnWaterRequest', s => s.building?.find(b => b.buildingId === plot.buildingId)?.farm, {
         expenses: [crop.material],

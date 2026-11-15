@@ -177,6 +177,8 @@ section h2:first-child { border-top:0; margin-top:0; padding-top:0 }
 .trade-radar-field { display:grid; gap:1px; overflow-wrap:anywhere }
 .trade-radar-field small { color:var(--muted) }
 .overview-production { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:14px }
+/* 托管汇总行在网格之上，说明「脚本管生产/管种植」这层状态，不参与两栏布局。 */
+.overview-hosting { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:10px }
 .overview-table { min-width:0; overflow-x:auto }
 .overview-table h4 { margin:0; font-size:13px; color:var(--muted) }
 /* 农田与工厂列表整块展开：不再限制高度、不做内部滚动，条目多时由卡片自身撑高。 */
