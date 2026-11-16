@@ -37,7 +37,7 @@ export function defaultSettings() {
     notifications: { wecom: { enabled: false, webhook: '' } },
     spending: { enabled: false, dailyLimit: 0, minRubyStock: 0, clickGoldTimes: 0, dailiesDiscountTickets2x: false, modules: Object.fromEntries([...MODULES, 'dailies'].map(id => [id, 0])) },
     modules: {
-      island: { enabled: false, collect: true, finish: true, build: false, upgrade: false, speedUp: false, adSpeedUp: false, disabledBuildings: [], factory: {
+      island: { enabled: false, collect: true, finish: true, build: false, buildSupply: false, upgrade: false, speedUp: false, adSpeedUp: false, disabledBuildings: [], factory: {
         gain: true, autoProduce: false, products: {}, disabledFactories: [], priorityProduce: false, mondayGuildPriority: false, proposedPriority: ['resident', 'cargo', 'guild'], speedUpForDemand: false,
         // 分档只使用单件实际耗时；库存目标是订单/配方消耗之外的余量，不默认补满仓。
         fastTimeSecs: 300, shortTimeSecs: 600, fastStockLow: 5, fastStockHigh: 10, shortStockLow: 3, shortStockHigh: 5,

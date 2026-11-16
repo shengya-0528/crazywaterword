@@ -1,4 +1,4 @@
-import { surveyWorld, planWorld, makeTypeResolver } from '../world.mjs';
+import { surveyWorld, planWorld, makeTypeResolver, buildSupplyNeeds } from '../world.mjs';
 import { nextOrderTier } from '../tasks.mjs';
 import { amount, idString } from './context.mjs';
 import { costs, discardExpiredVipRegistration, repeat, succeeded, skip, awaitPush, mutate, reconcileFactoryHarvestPending } from './common.mjs';
@@ -284,6 +284,13 @@ export async function island(ctx, options) {
   // 预读募兵供跨午夜策略切换；排产器只在周一纳入额外来源，其他日期保持保存的来源顺序。
   // 英雄突袭只有当前活动推送有效时才贡献缺口。
   const needs = f.priorityProduce ? await demand(ctx, [...new Set([...f.proposedPriority, ...(f.mondayGuildPriority ? ['guild'] : []), 'heroRaid'])], { includeCovered: true }) : [];
+  // 待建建筑的材料同样是真实需求：单次操作会把建造缺料转成生产任务，挂机此前只排订单，
+  // 空有建材缺口也不会自己补，只能靠人工点一轮兜底。排在订单需求之后、补货水位之前，
+  // 保证有时限的订单先用料；只收当前工厂等级就能自产的项，见 buildSupplyNeeds 的判定。
+  // 独立开关而非复用「空位建造」：备料会占用工厂和材料，默认关闭，由用户显式承担这部分消耗。
+  if (f.priorityProduce && options.buildSupply) {
+    for (const row of buildSupplyNeeds(ctx.config, survey)) needs.push({ id: row.id, need: row.need, lack: row.need, source: 'build' });
+  }
   const water = await ctx.query('OnWaterRequest');
   for (const building of water.building ?? []) {
     if (!building.factory) continue;

@@ -316,6 +316,42 @@ export async function surveyWorld(client, protocol, { config = null, player = nu
   };
 }
 
+/**
+ * 汇总待建建筑还缺的自产材料，供自动化的三档排产为建造备料。
+ *
+ * 判定条件与 planWorld 的备料分支保持一致：只有类型可识别、不在施工中、前置建筑与人口/等级
+ * 都已满足的空地才产生需求；材料必须由当前已建成的某座工厂按等级就能产出，否则这份缺口
+ * 永远填不满，留在排产里只会把生产位拖在注定失败的任务上。
+ * 同一种材料被多块空地需要时取最大值而不是累加——先建任意一块就能消化这份备料。
+ *
+ * @param {object} config 游戏配置包。
+ * @param {object} survey 当前海面快照，即 surveyWorld 的结果。
+ * @returns {Array<{id: string, need: number}>} 每种材料需要备的数量；没有可备料的空地时返回空数组。
+ */
+export function buildSupplyNeeds(config, survey) {
+  const unlocks = indexBy(config, 'BuildingUnlockCfg', 'buildingId');
+  const craftable = new Set(rowsOf(config, 'BuildingProduceCfg')
+    .filter(row => survey.factories?.some(b => b.type === row.buildType && b.level >= row.unlockLevel))
+    .map(row => row.itemId));
+  const levels = new Map(survey.buildings.map(b => [b.buildingId, b.level]));
+  const needs = new Map();
+  for (const building of survey.buildings) {
+    if (!building.type || building.level !== 0) continue;
+    // 有开工或完工时间就已有工程，即便已到竣工时间也不是空地。
+    if (building.buildStartTime > 0 || building.buildFinishTime > 0) continue;
+    const row = unlocks.get(building.buildingId);
+    if (!row) continue;
+    if ((row.condition ?? []).some(([id, level]) => (levels.get(id) ?? 0) < level)) continue;
+    if (row.curPeople > survey.population) continue;
+    if (row.playerLevel > (survey.player?.level ?? 1)) continue;
+    for (const [id, num] of row.consume ?? []) {
+      if (!craftable.has(id)) continue;
+      needs.set(id, Math.max(needs.get(id) ?? 0, Number(num)));
+    }
+  }
+  return [...needs].map(([id, need]) => ({ id, need }));
+}
+
 // 计划：收成品 → 竣工 → 建造 → 交单 → 排产 → 余料升级 → 加速。每步都只排「客户端确实会发的请求」。
 export function planWorld(survey, {
   config = null,

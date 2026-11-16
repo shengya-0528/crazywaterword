@@ -2,6 +2,10 @@
 
 按日期倒序整理已提交的功能与修复。日期对应仓库提交记录。
 
+## 2026-11-17
+
+- 自动化海面模块补上「为待建建筑补产材料」，`modules.island` 新增 `buildSupply`（默认 false）。此前只有单次操作和任务开关网格里的同名任务会为待建建筑备料，`island` 模块内的需求来源只有 `demand()` 里的居民订单、货船、联盟募兵和英雄突袭，空有建材缺口也不会自己排产——`planWorld` 里那条 `enabled('buildSupply')` 分支在模块模式下被 `loop.mjs` 的 ownership 映射屏蔽，细分开关的执行权归了 `island`，但模块没有对应字段，等于两头都不生效。现在 `world.mjs` 新增导出 `buildSupplyNeeds(config, survey)`：按 `BuildingUnlockCfg` 补齐待建条件（前置建筑等级、`curPeople` 不超过当前人口、`playerLevel` 不超过角色等级），跳过施工中（`buildStartTime`／`buildFinishTime` 大于 0）和没有解锁行的地块，只收 `BuildingProduceCfg` 里当前工厂类型与等级就能自产的材料，多块空地缺同一项时取缺口最大值而不叠加；`base.mjs` 把它转成 `source: 'build'` 的需求行追加在订单需求之后、补货水位之前，因此周订单、贸易港和居民订单仍先取用库存。开关独立于「自动建造」：备料要占工厂产能和材料，默认关闭，关掉后建造缺料仍只能等人工点一轮；设置页补「为待建建筑补产材料」标签与说明，README 同步区分模块开关与任务开关网格里的同名项。`selftest.mjs` 覆盖备料判定（人口不足、工厂等级不足、施工中地块、多空地取最大值），`test/automation.test.mjs` 用例锁住「开关打开才排产、关闭则不耗料」。
+
 ## 2026-11-15
 
 - 工厂第三档补货可开关：`modules.island.factory` 新增 `longStockLow` / `longStockHigh`（默认 0，等于保持旧行为）。原因是 `planBuffers()` 里的 `if (tier === 3 || restocking.includes(id)) continue;` 让单件耗时超过第二档（默认 600 秒）的产品完全不备货，只走订单需求，于是没有订单时这些厂长期空转——总览 15 座厂常年只有 3 座有队列，而其余厂的产品库存普遍是 0。现在第三档读自己的水位，`longStockHigh > 0` 才参与补货，`longStockLow > longStockHigh` 被 `validateSettings` 拒绝；设置页补「第三档补货低水位/高水位」标签与说明，`demandOnly()` 测试夹具同步显式关掉两个水位。

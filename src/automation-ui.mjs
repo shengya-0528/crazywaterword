@@ -21,7 +21,7 @@ const executionModes = {
 };
 const automationLabels = {
   season:'当前赛季',vipFreeAd:'VIP免广告',spending:'钻石消费',enabled:'开启',dailyLimit:'每日总额度',minRubyStock:'最低钻石保留量',clickGoldTimes:'钻石点金次数',modules:'各模块每日额度',adSpeedUp:'免广告加速（建造/生产）',
-  collect:'领取产物',finish:'自动竣工',build:'自动建造',upgrade:'自动升级',speedUp:'使用加速道具',disabledBuildings:'禁用建筑',factory:'工厂',gain:'领取成品',autoProduce:'游戏内自动生产（特权）',products:'工厂产品（建筑类型 → 产品）',disabledFactories:'禁用工厂',priorityProduce:'需求优先生产',proposedPriority:'需求顺序',speedUpForDemand:'为需求加速',
+  collect:'领取产物',finish:'自动竣工',build:'自动建造',buildSupply:'为待建建筑补产材料',upgrade:'自动升级',speedUp:'使用加速道具',disabledBuildings:'禁用建筑',factory:'工厂',gain:'领取成品',autoProduce:'游戏内自动生产（特权）',products:'工厂产品（建筑类型 → 产品）',disabledFactories:'禁用工厂',priorityProduce:'需求优先生产',proposedPriority:'需求顺序',speedUpForDemand:'为需求加速',
   harvest:'收割',plant:'种植',cropPriorities:'作物优先级（数字越小越优先）',cropKeepStock:'作物库存水位',priorityPlant:'订单需求优先',seedOnDemand:'缺种子时安排生产',speedUpMaxActions:'每轮最多加速次数',orderReward:'领取订单档位奖',blockedMaterials:'禁止交单材料',skipCropOrders:'跳过作物订单',minExp:'最低经验奖励',minGold:'最低金币奖励',dailyCap:'每日次数上限（0 不设本地上限）',fill:'装填货船',reward:'领取奖励',optionIndex:'选择选项（1 或 2）',
   fishing:'钓鱼',maxFishCasts:'每轮最多钓鱼次数',floater:'拾取浮漂',floaterCollectWhenFull:'满仓仍收取浮漂',openChests:'使用钥匙开箱',maxChests:'每轮最多开箱次数',diving:'潜水',divingEach:'每种潜水材料数量',salvage:'拾荒',salvageEach:'每种拾荒材料数量',enhance:'采集强化',enhanceTargetLevel:'强化目标等级',claim:'领取',levelUp:'升级',levelReward:'领取等级奖励',claimAfterHours:'累计挂机几小时后领取',
   heroes:'指定英雄',levelUpMaxActions:'每轮升级轮数',starUp:'升星',skillLevelUp:'技能升级',skillAdvance:'技能进阶',exclusiveLevelUp:'专武升级',exclusiveStarUp:'专武升星',equipEnhance:'强化所选英雄装备',badgeEnhance:'强化所选英雄徽章',badgeExpItemNum:'徽章经验道具数量',appoint:'委任',positions:'委任位置（按英雄顺序）',watchSkillVideo:'请求英雄广告奖励',universal:'允许万能材料',fragRecruit:'使用碎片招募所选英雄',recruit:'招募',free:'免费次数',tickets:'使用现有券',points:'领取招募积分奖',maxDraws:'每轮最多抽取次数',activate:'激活',suit:'套装',
@@ -165,6 +165,8 @@ const automationFieldActionCopy = {
   collect:'领取已经完成且服务器标记为可领的产物；不启动新的生产或打造',
   finish:'完成已满足竣工条件的建筑；不新建建筑',
   build:'按当前可建条件创建建筑；人口、材料或建筑状态不满足时跳过',
+  buildSupply:'待建建筑的缺失材料也当成本组的真实需求参与排产，但只排当前工厂等级就能自产的材料；'
+    + '备料会占用工厂产能和库存，因此独立于「自动建造」单独开关，默认关闭',
   upgrade:'升级当前可升级的建筑；材料不足或不满足前置条件时跳过',
   speedUp:'对本组正在进行的项目使用现有加速道具；没有道具时不会购买',
   adSpeedUp:'对剩余时间严格超过 30 分钟的建造或生产使用当天 VIP 免广告加速；每日额度用完后不再查询或请求',

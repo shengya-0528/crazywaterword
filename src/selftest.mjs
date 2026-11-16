@@ -872,7 +872,7 @@ roundTrip(Buffer.from('RequestResponse'.repeat(200)), 'text');
 // 订单优先的资源分配：订单材料与排产耗料先扣，剩下的才轮到升级。所以同样的库存，
 // 少 8 个木材就该从「能升级」翻成「不能升级」，而这条分界线只能来自预留而不是随机。
 {
-  const { planWorld, surveyWorld } = await import('./world.mjs');
+  const { planWorld, surveyWorld, buildSupplyNeeds } = await import('./world.mjs');
   const config = { tables: {
     BuildingCfg: { data: [{ buildingType: '民居' }, { buildingType: '材料厂' }] },
     BuildingProduceCfg: { data: [
@@ -920,6 +920,27 @@ roundTrip(Buffer.from('RequestResponse'.repeat(200)), 'text');
   assert.equal(jobsForBuild(false)[0].body.productId, '木板', '关闭备料后恢复按库存排产');
   construction.weekOrder = new Map([['木板', 1]]);
   assert.equal(jobsForBuild(true)[0].body.productId, '木板', '周订单优先于建材');
+  // 挂机侧的建造备料与单次操作共用同一份判定：待建空地缺的自产材料也算真实需求，
+  // 否则挂机只会排订单，建材缺口永远要人工点一轮兜底。
+  assert.deepEqual(buildSupplyNeeds(buildingConfig, construction), [{ id: '布匹', need: 4 }],
+    '待建空地缺的自产材料成为备料需求');
+  assert.deepEqual(buildSupplyNeeds(buildingConfig, { ...construction, player: { level: 5 } }), [],
+    '角色等级不够的空地不产生备料');
+  const peopleConfig = { ...buildingConfig, tables: { ...buildingConfig.tables,
+    BuildingUnlockCfg: { data: [{ buildingId: '待建工厂', playerLevel: 10, curPeople: 31, consume: [['布匹', 4]] }] } } };
+  assert.deepEqual(buildSupplyNeeds(peopleConfig, construction), [], '人口不够的空地不产生备料');
+  const lazyFactory = { ...construction, factories: [{ buildingId: '1材料厂', type: '材料厂', level: 0 }] };
+  assert.deepEqual(buildSupplyNeeds(buildingConfig, lazyFactory), [], '工厂等级不够生产该材料时不计入备料');
+  const underConstruction = { ...construction, buildings: [construction.buildings[0], { ...construction.buildings[1], buildFinishTime: 100 }] };
+  assert.deepEqual(buildSupplyNeeds(buildingConfig, underConstruction), [], '施工中的地块不再重复备料');
+  const twinConfig = { ...buildingConfig, tables: { ...buildingConfig.tables,
+    BuildingUnlockCfg: { data: [
+      { buildingId: '待建工厂', playerLevel: 10, consume: [['布匹', 4]] },
+      { buildingId: '待建工厂2', playerLevel: 10, consume: [['布匹', 3]] },
+    ] } } };
+  const twins = { ...construction, buildings: [...construction.buildings, { buildingId: '待建工厂2', type: '种子厂', level: 0, product: [] }] };
+  assert.deepEqual(buildSupplyNeeds(twinConfig, twins), [{ id: '布匹', need: 4 }],
+    '多块空地共用同一份备料，数量取最大值而不是叠加');
   // reserve all 50 items for the weekly order: only a VIP stock bonus leaves
   // room to make more for the resident, without submitting either order.
   const capacityConfig = { tables: { ...config.tables,

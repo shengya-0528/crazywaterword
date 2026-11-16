@@ -4319,6 +4319,40 @@ test('factory demand: queued and finished output cover demand; remaining slots f
   } finally { restarted.dispose(); }
 });
 
+/**
+ * 待建建筑的材料缺口必须由挂机自己排产补齐。
+ *
+ * 单次操作一直把建造缺料转成生产任务，自动化此前只排订单，建材不够就只能等人工点一轮；
+ * 这里同时锁住接线（独立的备料开关才备料，不跟着「自动建造」走）与备料来源（只认当前工厂能自产的材料）。
+ */
+test('island: pending building materials drive autonomous production', async () => {
+  const run = async buildSupply => {
+    const f = await moduleRun('island', { collect: false, finish: false, build: true, buildSupply }, ({ ctx, client, settings }) => {
+      Object.assign(settings.modules.island.factory, {
+        gain: false, autoProduce: false, priorityProduce: true, proposedPriority: [],
+        fastStockLow: 0, fastStockHigh: 0, shortStockLow: 0, shortStockHigh: 0, longStockLow: 0, longStockHigh: 0,
+      });
+      table(ctx, 'BuildingCfg', [{ buildingType: '食品厂' }, { buildingType: '种子厂' }]);
+      table(ctx, 'BuildingUnlockCfg', [{ buildingId: '1种子厂', buildingType: '种子厂', playerLevel: 1, consume: [['食品', 4]], condition: [] }]);
+      table(ctx, 'BuildingProduceParamCfg', [{ paramName: '制造位上限', paramValue: 4 }]);
+      table(ctx, 'GameParamCfg', [{ paramName: '产品存量初始上限', paramValue: 50 }]);
+      table(ctx, 'BuildingProduceCfg', [{ buildType: '食品厂', itemId: '食品', unlockLevel: 1, produceTime: 600, costItem: [['木材', 1]] }]);
+      client.items.set('木材', 10);
+    }, {
+      states: { OnWaterRequest: { building: [{ buildingId: '1食品厂', level: 1, factory: { factoryQ: [], finishedProducts: [] } }] } },
+      handlers: {
+        StartFactoryProduceRequest: async (body, _response, client) => {
+          const factory = client.states.OnWaterRequest.building[0].factory;
+          factory.factoryQ.push({ idx: 100 + factory.factoryQ.length, productId: body.productId });
+        },
+      },
+    });
+    return f.client.calls.filter(call => call.name === 'StartFactoryProduceRequest').map(call => call.body.productId);
+  };
+  assert.deepEqual(await run(true), ['食品', '食品', '食品', '食品'], '待建建筑缺的自产材料由挂机自己排产补齐');
+  assert.deepEqual(await run(false), [], '关掉备料开关时不耗料，建造缺料只能等人工点一轮');
+});
+
 /** 遗留的工厂收成待确认记录只跳过该写入，不能在服务重启后再次停止整个挂机。 */
 test('island: pending factory harvest does not abort later automation modules', async () => {
   const f = await moduleRun('island', { collect: false, finish: false }, ({ ctx, settings }) => {
