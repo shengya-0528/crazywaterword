@@ -153,7 +153,9 @@ function productionFixture({ queue = [], stock = [['木材', 20]], recipes, opti
     { buildType: '食品厂', itemId: '长货', produceTime: 7200, unlockLevel: 1, costItem: [['木材', 1]] }];
   const f = fixture({ dryRun, states: { OnWaterRequest: { building: [{ buildingId: '1食品厂', level: 1, factory: { factoryQ: structuredClone(queue), autoProductId, finishedProducts: [] } }] } } });
   f.ctx.setModule('island');
-  Object.assign(f.settings.modules.island.factory, { priorityProduce: true, fastStockLow: 2, fastStockHigh: 3, shortStockLow: 1, shortStockHigh: 2, priorityBurstLimit: 10, ...options });
+  // 这些用例逐条核对需求与备料的排产序列；空闲兜底会为剩余空位补一件，默认关掉以隔离它，
+  // 兜底本身由 idle fallback 用例显式打开验证。
+  Object.assign(f.settings.modules.island.factory, { priorityProduce: true, idleFallback: false, fastStockLow: 2, fastStockHigh: 3, shortStockLow: 1, shortStockHigh: 2, priorityBurstLimit: 10, ...options });
   table(f.ctx, 'BuildingCfg', [{ buildingType: '食品厂' }]);
   table(f.ctx, 'BuildingProduceParamCfg', [{ paramName: '制造位上限', paramValue: slots }]);
   table(f.ctx, 'GameParamCfg', [{ paramName: '产品存量初始上限', paramValue: 50 }]);
@@ -4089,6 +4091,21 @@ test('factory scheduler: instant output is collected and unlocks its downstream 
   } finally { f.ctx.dispose(); }
 });
 
+/** 没有订单时空制造位由兜底补上，但兜底开工不能推动长任务保底计数。 */
+test('factory scheduler: idle fallback fills empty slots without advancing the fairness streak', async () => {
+  const f = productionFixture({ stock: [['木材', 6]], options: {
+    idleFallback: true, idleStockHigh: 2, priorityBurstLimit: 1,
+    fastStockLow: 0, fastStockHigh: 0, shortStockLow: 0, shortStockHigh: 0,
+  } });
+  try {
+    await runProduction(f);
+    const starts = f.client.calls.filter(call => call.name === 'StartFactoryProduceRequest');
+    assert.deepEqual(starts.map(call => call.body.productId), ['快料', '快料'], 'fill stops at the idle target');
+    assert.ok(f.ctx.results.find(row => row.request === 'StartFactoryProduceRequest')?.label.startsWith('空闲兜底 · '));
+    assert.equal(f.ctx.memory('factory.production').streaks['1食品厂'] ?? 0, 0, 'fill work is not a demand concession');
+  } finally { f.ctx.dispose(); }
+});
+
 /** 专用收成回包已确认领取成功时，连续生产导致读回仍有成品不得留下重复提交锁。 */
 test('factory scheduler: harvest response settles despite concurrent replenishment', async () => {
   const f = productionFixture({ queue: [], stock: [['木材', 20]] });
@@ -4330,6 +4347,8 @@ test('island: pending building materials drive autonomous production', async () 
     const f = await moduleRun('island', { collect: false, finish: false, build: true, buildSupply }, ({ ctx, client, settings }) => {
       Object.assign(settings.modules.island.factory, {
         gain: false, autoProduce: false, priorityProduce: true, proposedPriority: [],
+        // 本用例只验证待建建筑备料：关掉兜底，缺料时就该真的空着等人点。
+        idleFallback: false,
         fastStockLow: 0, fastStockHigh: 0, shortStockLow: 0, shortStockHigh: 0, longStockLow: 0, longStockHigh: 0,
       });
       table(ctx, 'BuildingCfg', [{ buildingType: '食品厂' }, { buildingType: '种子厂' }]);
@@ -4424,7 +4443,8 @@ test('factory demand: current hero raid order joins scheduling, while an expired
   assert.equal(active.client.calls.some(call => call.name === 'LoginFinishRequest'), false);
 
   const expired = await moduleRun('island', { collect: false, finish: false }, ({ ctx, client, settings }) => {
-    Object.assign(settings.modules.island.factory, { gain: false, priorityProduce: true, proposedPriority: ['resident'] });
+    // 关掉兜底，确保零次开工只归因于活动过期而非被兜底任务填了空位。
+    Object.assign(settings.modules.island.factory, { gain: false, priorityProduce: true, proposedPriority: ['resident'], idleFallback: false });
     ctx.pushes.set('SCHeroRaidOpen', { raid: { raidId: 2001, startTime: fixedNow / 1000 - 60, finishTime: fixedNow / 1000 - 1, order: { orderId: 15 } } });
     table(ctx, 'BuildingCfg', [{ buildingType: '食品厂' }]); table(ctx, 'BuildingProduceParamCfg', [{ paramName: '制造位上限', paramValue: 2 }]); table(ctx, 'GameParamCfg', [{ paramName: '产品存量初始上限', paramValue: 50 }]);
     table(ctx, 'BuildingProduceCfg', [{ buildType: '食品厂', itemId: '食盐', unlockLevel: 1, produceTime: 7200, costItem: [['木材', 1]] }]);

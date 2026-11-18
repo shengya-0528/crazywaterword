@@ -311,6 +311,33 @@ export function planProduction({ config, water, stock, needs, options, disabledB
       if (task.guildPriority) guildHeld.set(id, Math.max(0, (guildHeld.get(id) ?? 0) - num));
     }
   }
+  /** 现货池剩余量：兜底只能用订单与补货预留之外的原料。 */
+  function supplyLeft(id) { return (supply.get(id) ?? []).reduce((sum, lot) => sum + lot.num, 0); }
+  /**
+   * 空闲兜底：队列没有待开工项时，为该厂挑一件「未达目标 + 直接原料齐全」的产品，避免制造位整天空转。
+   * 顺序为档位低 → 依赖更深（更贴近基础料）→ 库存更少 → 品名稳定；目标库存不超过游戏单品上限。
+   */
+  function idleFallback(building) {
+    const target = Math.min(stockCap, options.idleStockHigh ?? 0);
+    if (!options.idleFallback || !(target > 0)) return null;
+    // 兜底任务不属于订单，不参与周一募兵的原料保留判断。
+    const spare = { guildPriority: false };
+    const candidates = [...recipes.values()].filter(recipe => recipe.buildType === resolve(building.buildingId)
+      && recipe.unlockLevel <= building.level && (totals.get(recipe.itemId) ?? 0) < target);
+    candidates.sort((a, b) => tierOf(a.itemId) - tierOf(b.itemId) || depthOf(b.itemId) - depthOf(a.itemId)
+      || (totals.get(a.itemId) ?? 0) - (totals.get(b.itemId) ?? 0) || a.itemId.localeCompare(b.itemId));
+    for (const recipe of candidates) {
+      const required = new Map();
+      for (const [id, num] of recipe.costItem) required.set(id, (required.get(id) ?? 0) + num);
+      // 只挑原料立刻凑得齐的配方；缺料就继续空着，交给后续需求或补货，不留下一条必然缺料的任务。
+      if (![...required].every(([id, num]) => Math.min(supplyLeft(id), availableFor(spare, id)) >= num)) continue;
+      const task = createTask(recipe, `idle:${building.buildingId}`);
+      task.idle = true;
+      for (const [id, num] of required) admission.set(id, (admission.get(id) ?? 0) - num);
+      return task;
+    }
+    return null;
+  }
   const choices = [];
   for (const building of factories) {
     const queue = building.factory.factoryQ ?? [];
@@ -326,7 +353,13 @@ export function planProduction({ config, water, stock, needs, options, disabledB
     candidates.sort((a, b) => Number(Boolean(b.guildPriority)) - Number(Boolean(a.guildPriority)) || (longDue ? Number(b.demand && b.tier === 3) - Number(a.demand && a.tier === 3) || Number(Boolean(b.queued)) - Number(Boolean(a.queued)) : 0)
       || a.tier - b.tier || depthOf(b.productId) - depthOf(a.productId) || Number(b.demand) - Number(a.demand) || a.order - b.order);
     let best = candidates[0];
-    if (!best) continue;
+    if (!best) {
+      // 队列里没有待开工项才兜底；已有排队任务时先把排好的活干完，不抢占制造位。
+      const idle = queue.length < slots && !building.factory.autoProductId
+        && !waiting.some(job => job.buildingId === building.buildingId) ? idleFallback(building) : null;
+      if (idle) choices.push({ kind: 'start', building, task: idle, longDue: false, idle: true });
+      continue;
+    }
     const buildingWaiting = waiting.filter(job => job.buildingId === building.buildingId);
     if (longDue && best.queued) {
       // 保护整个既有前缀，让已排好的短料先完成；不能为了保底把刚插入的短料又全部取消。
@@ -354,7 +387,8 @@ export function planProduction({ config, water, stock, needs, options, disabledB
     best = candidates.find(task => !task.queued);
     if (best && queue.length < slots) choices.push({ kind: 'start', building, task: best, longDue: longDue && best.demand && best.tier === 3 });
   }
-  // 可执行的长订单保底先获得原料和生产位，其余优先安排底层原料再排成品；每一步写后都会重新规划。
-  choices.sort((a, b) => Number(Boolean(b.task.guildPriority)) - Number(Boolean(a.task.guildPriority)) || Number(b.longDue) - Number(a.longDue) || a.task.tier - b.task.tier || depthOf(b.task.productId) - depthOf(a.task.productId) || Number(b.task.demand) - Number(a.task.demand) || a.task.order - b.task.order);
+  // 可执行的长订单保底先获得原料和生产位，其余优先安排底层原料再排成品，空闲兜底永远排在真实需求之后。
+  choices.sort((a, b) => Number(Boolean(b.task.guildPriority)) - Number(Boolean(a.task.guildPriority)) || Number(Boolean(a.idle)) - Number(Boolean(b.idle))
+    || Number(b.longDue) - Number(a.longDue) || a.task.tier - b.task.tier || depthOf(b.task.productId) - depthOf(a.task.productId) || Number(b.task.demand) - Number(a.task.demand) || a.task.order - b.task.order);
   return { choices, restocking, allocations, tasks, active, waiting, factories, urgentBuildings: [...urgentBuildings], warnings: [...new Set(warnings)] };
 }

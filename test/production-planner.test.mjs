@@ -51,7 +51,8 @@ test('production tiers: threshold boundaries use single-item duration, not queue
 });
 
 test('stock watermarks: low triggers, high stops, and hysteresis survives between rounds', () => {
-  const input = scenario({ recipes: [recipe('快料', 60)], stock: [['快料', 1], ['木材', 50]] });
+  // 只验证水位触发与迟滞；空闲兜底由独立用例覆盖，避免补齐任务混进补货计数。
+  const input = scenario({ recipes: [recipe('快料', 60)], stock: [['快料', 1], ['木材', 50]], options: { idleFallback: false } });
   assert.equal(planProduction(input).tasks.length, 3);
   input.stock.set('快料', 2);
   assert.equal(planProduction(input).tasks.length, 0, 'equal to low is not below low');
@@ -203,7 +204,7 @@ test('queue policy: reordering can be disabled without disabling replenishment i
 });
 
 test('factory settings: reject inverted tiers, inverted watermarks, and disabled fairness', () => {
-  for (const changes of [{ fastTimeSecs: 601 }, { fastStockLow: 11 }, { shortStockLow: 6 }, { longStockLow: 5, longStockHigh: 1 }, { priorityBurstLimit: 0 }]) {
+  for (const changes of [{ fastTimeSecs: 601 }, { fastStockLow: 11 }, { shortStockLow: 6 }, { longStockLow: 5, longStockHigh: 1 }, { priorityBurstLimit: 0 }, { idleStockHigh: -1 }]) {
     const settings = defaultSettings(); Object.assign(settings.modules.island.factory, changes);
     assert.throws(() => validateSettings(settings));
   }
@@ -266,6 +267,56 @@ test('Monday guild: full automatic queues and protected waiting jobs stay protec
   }
 });
 
+
+test('idle fallback: empty factories keep producing the cheapest in-stock product up to the target', () => {
+  // 空闲工厂没有订单也不该整天空转：默认按兜底目标补一件原料齐全的产品。
+  const input = scenario({ recipes: [recipe('长货', 7200), recipe('中料', 500), recipe('快料', 60)], stock: [['木材', 10]], options: demandOnly() });
+  const plan = planProduction(input);
+  assert.equal(plan.choices.length, 1);
+  assert.equal(plan.choices[0].idle, true);
+  assert.equal(plan.choices[0].kind, 'start');
+  assert.equal(plan.choices[0].task.productId, '快料', 'lowest tier wins the fill slot');
+  assert.equal(plan.tasks.find(task => task.productId === '快料').idle, true);
+  assert.equal(plan.allocations.filter(row => row.id === '木材' && row.kind === 'stock').length, 1);
+});
+
+test('idle fallback: the target stops the fill, and missing raw material keeps the slot empty', () => {
+  const full = scenario({ recipes: [recipe('快料', 60)], stock: [['快料', 10], ['木材', 10]],
+    options: { ...demandOnly(), idleStockHigh: 10 } });
+  assert.equal(planProduction(full).choices.length, 0, 'on target means no fallback');
+  const short = scenario({ recipes: [recipe('快料', 60, [['铁矿', 1]])], stock: [['木材', 10]], options: demandOnly() });
+  const plan = planProduction(short);
+  assert.equal(plan.choices.length, 0, 'missing iron ore must not leave a task that can never start');
+  assert.equal(plan.allocations.filter(row => row.kind === 'missing').length, 0);
+});
+
+test('idle fallback: queued work, automatic production and disabled switch keep the factory idle', () => {
+  const waitingQueue = [{ idx: 1, productId: '中料', finishTime: 1200 }, { idx: 2, productId: '中料', finishTime: 0 }];
+  const queued = scenario({ recipes: [recipe('中料', 500), recipe('快料', 60)], stock: [['木材', 10]], queue: waitingQueue, options: demandOnly() });
+  assert.equal(planProduction(queued).choices.length, 0, 'existing waiting job already occupies the lane');
+  const automatic = scenario({ recipes: [recipe('快料', 60)], stock: [['木材', 10]], options: demandOnly() });
+  automatic.water.building[0].factory.autoProductId = '快料';
+  assert.equal(planProduction(automatic).choices.length, 0, 'game automatic production owns the queue');
+  const disabled = scenario({ recipes: [recipe('快料', 60)], stock: [['木材', 10]], options: { ...demandOnly(), idleFallback: false } });
+  assert.equal(planProduction(disabled).choices.length, 0);
+});
+
+test('idle fallback: real demand is scheduled before any fill task', () => {
+  const input = scenario({ recipes: [recipe('快料', 60), recipe('订单货', 7200, [['木材', 1]], '服装厂')], stock: [['木材', 5]],
+    needs: [{ id: '订单货', need: 1, source: 'resident' }], options: demandOnly() });
+  const plan = planProduction(input);
+  assert.equal(plan.choices[0].task.productId, '订单货');
+  assert.equal(plan.choices[0].idle, undefined);
+  assert.equal(plan.choices.at(-1).idle, true, 'fill task sorts after every real plan');
+});
+
+test('idle fallback: products already at the game cap are never queued', () => {
+  const input = scenario({ recipes: [recipe('快料', 60)], stock: [['快料', 49], ['木材', 10]], options: { ...demandOnly(), idleStockHigh: 80 } });
+  assert.equal(planProduction(input).choices.length, 1);
+  input.stock.set('快料', 50);
+  // 满仓时既不补货也不兜底，避免超出单品上限后任务被服务端拒绝。
+  assert.equal(planProduction(input).choices.length, 0);
+});
 
 test('Monday guild: partially supplied guild recipe reserves ingredients from ordinary ready tasks', () => {
   const input = scenario({ recipes: [recipe('募兵货', 7200, [['木材', 1], ['铁矿', 1]]), recipe('普通货', 60)],

@@ -2,6 +2,10 @@
 
 按日期倒序整理已提交的功能与修复。日期对应仓库提交记录。
 
+## 2026-11-19
+
+- 工厂新增「空闲兜底」，`modules.island.factory` 增加 `idleFallback`（默认 true）与 `idleStockHigh`（默认 10）。起因是总览 15 座厂里有 6 座（种子厂、建材厂、活动工厂、饰品厂、金属厂、服装厂）长期显示「空闲」，而工厂报告显示这些厂多半不是没需求就是产品已到 50 上限，空制造位一空就是几个小时。现在 `production-planner.mjs` 在每座工厂走完订单与补货的候选筛选后，如果本轮没有可执行候选、队列里也没有待开工项（`waiting` 为空）、队列未满且没有开游戏内自动生产，就按「档位低 → 依赖层更深（更贴近基础料）→ 库存更少 → 品名」挑一件该厂当前等级可产、库存低于目标且直接原料齐全的配方，用 `createTask` 建任务并打 `idle: true`；原料判定取 `supply` 剩余量与 `availableFor` 的较小值，缺料就保持空闲，不制造必然缺料的分配，也不会污染 `allocations` 里的 `missing` 记录。兜底任务扣减准入量但不登记 `demand`/`guildPriority`，因此在最终 `choices.sort` 里排在所有真实需求之后，有订单时绝不会插队；`production.mjs` 的 `finishIntent` 对 `intent.idle` 跳过 `streaks` 累加，避免填满空位被当成「短料让位」而提前触发长任务保底，运行日志与操作标签前缀为「空闲兜底 · 」。目标值受游戏「产品存量初始上限」（50）约束，满仓产品不再排；`validateSettings` 增加负数校验，设置页补「空闲工厂兜底生产」「兜底产品库存目标」标签与说明。`test/production-planner.test.mjs` 新增 5 个用例（按档位补货、目标停止与缺料留空、已有 `waiting`／自动生产／开关关闭不兜底、真实需求排在兜底之前、满仓不排），`test/automation.test.mjs` 新增一条端到端用例锁住「补到目标即停 + 标签 + 不动 streaks」，原有 fixture 显式关闭兜底以隔离需求与备料的排产序列。
+
 ## 2026-11-17
 
 - 自动化海面模块补上「为待建建筑补产材料」，`modules.island` 新增 `buildSupply`（默认 false）。此前只有单次操作和任务开关网格里的同名任务会为待建建筑备料，`island` 模块内的需求来源只有 `demand()` 里的居民订单、货船、联盟募兵和英雄突袭，空有建材缺口也不会自己排产——`planWorld` 里那条 `enabled('buildSupply')` 分支在模块模式下被 `loop.mjs` 的 ownership 映射屏蔽，细分开关的执行权归了 `island`，但模块没有对应字段，等于两头都不生效。现在 `world.mjs` 新增导出 `buildSupplyNeeds(config, survey)`：按 `BuildingUnlockCfg` 补齐待建条件（前置建筑等级、`curPeople` 不超过当前人口、`playerLevel` 不超过角色等级），跳过施工中（`buildStartTime`／`buildFinishTime` 大于 0）和没有解锁行的地块，只收 `BuildingProduceCfg` 里当前工厂类型与等级就能自产的材料，多块空地缺同一项时取缺口最大值而不叠加；`base.mjs` 把它转成 `source: 'build'` 的需求行追加在订单需求之后、补货水位之前，因此周订单、贸易港和居民订单仍先取用库存。开关独立于「自动建造」：备料要占工厂产能和材料，默认关闭，关掉后建造缺料仍只能等人工点一轮；设置页补「为待建建筑补产材料」标签与说明，README 同步区分模块开关与任务开关网格里的同名项。`selftest.mjs` 覆盖备料判定（人口不足、工厂等级不足、施工中地块、多空地取最大值），`test/automation.test.mjs` 用例锁住「开关打开才排产、关闭则不耗料」。

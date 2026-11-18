@@ -43,6 +43,8 @@ export function defaultSettings() {
         fastTimeSecs: 300, shortTimeSecs: 600, fastStockLow: 5, fastStockHigh: 10, shortStockLow: 3, shortStockHigh: 5,
         // 第三档（单件超过第二档）默认不备货，只按订单需求开工；显式配置水位后才长期备货。
         longStockLow: 0, longStockHigh: 0,
+        // 空闲工厂兜底：队列里没有待开工项时，用空余制造位生产未达目标且原料齐全的产品，避免产能空转。
+        idleFallback: true, idleStockHigh: 10,
         priorityBurstLimit: 3, reorderQueue: true,
       } },
       farm: { enabled: false, harvest: true, plant: false, cropPriorities: {}, cropKeepStock: {}, priorityPlant: false, seedOnDemand: false, speedUp: false, speedUpMaxActions: 8 },
@@ -231,6 +233,8 @@ export function validateSettings(value, { pirateDailyLimit = null } = {}) {
   if (factory.fastTimeSecs > factory.shortTimeSecs) throw new Error('第一档耗时不能超过第二档耗时');
   if (factory.fastStockLow > factory.fastStockHigh || factory.shortStockLow > factory.shortStockHigh || factory.longStockLow > factory.longStockHigh) throw new Error('工厂补货低水位不能超过高水位');
   if (factory.priorityBurstLimit < 1) throw new Error('连续优先生产上限必须至少为 1');
+  // 兜底目标为 0 表示不兜底；负数没有业务含义，必须在保存时拦住。
+  if (factory.idleStockHigh < 0) throw new Error('空闲兜底库存目标不能为负数');
   return result;
 }
 

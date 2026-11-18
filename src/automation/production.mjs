@@ -68,7 +68,8 @@ export async function scheduleProduction(ctx, options, needs, disabledBuildings 
     } else {
       state.deferred = state.deferred.filter(entry => entry.token !== intent.token);
       // 恢复低水位的紧急补货不计入让位计数，避免只补三件就让一小时长任务占住生产位。
-      state.streaks[intent.buildingId] = intent.tier < 3 && !intent.urgent ? (state.streaks[intent.buildingId] ?? 0) + 1 : 0;
+      // 空闲兜底是填充空位，不代表需求让位，不能推动长任务保底提前。
+      if (!intent.idle) state.streaks[intent.buildingId] = intent.tier < 3 && !intent.urgent ? (state.streaks[intent.buildingId] ?? 0) + 1 : 0;
       if (intent.longDue) {
         // 将保底和开工确认一次性落盘，崩溃恢复也不会丢掉新长任务的位置保护。
         const job = water.building?.find(row => row.buildingId === intent.buildingId)?.factory?.factoryQ
@@ -177,13 +178,13 @@ export async function scheduleProduction(ctx, options, needs, disabledBuildings 
       const task = choice.task;
       const key = `factory:start:${buildingId}:${task.productId}`;
       state.intent = { kind: 'start', buildingId, productId: task.productId, tier: task.tier, token: task.deferred?.token, key, longDue: choice.longDue,
-        urgent: plan.urgentBuildings.includes(buildingId),
+        urgent: plan.urgentBuildings.includes(buildingId), idle: Boolean(choice.idle),
         beforeIndexes: (choice.building.factory.factoryQ ?? []).map(job => job.idx),
         before: outputCount(water, ctx.stock, task.productId) };
       if (!ctx.dryRun) persist();
       let confirmedWater;
       const result = await ctx.action('StartFactoryProduceRequest', { buildingId, productId: task.productId }, { key, allowed: samePolicy,
-        label: `${guildPriority && task.guildPriority ? '周一联盟募兵优先 · ' : ''}${task.tier}档生产 ${task.productId}`, expenses: task.recipe.costItem, confirm: async () => {
+        label: `${choice.idle ? '空闲兜底 · ' : ''}${guildPriority && task.guildPriority ? '周一联盟募兵优先 · ' : ''}${task.tier}档生产 ${task.productId}`, expenses: task.recipe.costItem, confirm: async () => {
           const current = await ctx.query('OnWaterRequest');
           await ctx.refreshStock();
           confirmedWater = current;
